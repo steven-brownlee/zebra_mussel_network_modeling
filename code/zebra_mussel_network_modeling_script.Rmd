@@ -1,0 +1,159 @@
+# Zebra mussel network modeling script
+
+# Contact information
+
+Contact: Steven Brownlee
+Email: steven.fr.brownlee@gmail.com
+Date last revised: June 24 2024
+
+# Session info
+
+R version 4.4.1 (2024-06-14)
+Platform: x86_64-redhat-linux-gnu
+Running under: Nobara Linux 40 (GNOME Edition)
+
+Matrix products: default
+BLAS/LAPACK: FlexiBLAS OPENBLAS-OPENMP;  LAPACK version 3.11.0
+
+locale:
+ [1] LC_CTYPE=en_CA.UTF-8      LC_NUMERIC=C              LC_TIME=en_CA.utf8       
+ [4] LC_COLLATE=en_CA.UTF-8    LC_MONETARY=en_CA.utf8    LC_MESSAGES=en_CA.UTF-8  
+ [7] LC_PAPER=en_CA.utf8       LC_NAME=C                 LC_ADDRESS=C             
+[10] LC_TELEPHONE=C            LC_MEASUREMENT=en_CA.utf8 LC_IDENTIFICATION=C      
+
+time zone: America/Vancouver
+tzcode source: system (glibc)
+
+attached base packages:
+[1] stats     graphics  grDevices utils     datasets  methods   base     
+
+loaded via a namespace (and not attached):
+ [1] digest_0.6.36     tidyr_1.3.1       utf8_1.2.4        R6_2.5.1         
+ [5] fastmap_1.2.0     tidyselect_1.2.1  xfun_0.46         magrittr_2.0.3   
+ [9] glue_1.7.0        tibble_3.2.1      knitr_1.48        pkgconfig_2.0.3  
+[13] htmltools_0.5.8.1 rmarkdown_2.27    dplyr_1.1.4       generics_0.1.3   
+[17] lifecycle_1.0.4   cli_3.6.3         fansi_1.0.6       vctrs_0.6.5      
+[21] compiler_4.4.1    purrr_1.0.2       rstudioapi_0.16.0 tools_4.4.1      
+[25] pillar_1.9.0      evaluate_0.24.0   yaml_2.3.10       rlang_1.1.4   
+
+# Set up data directory
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = '/home/steven/Documents/github/zebra_mussel_network_modeling/data_directory/gis_data/')
+```
+
+# R library setup
+
+```{r}
+library(sf)
+library(tidyverse)
+library(rcartocolor)
+library(sfnetworks)
+
+```
+
+# Import shapefiles
+
+```{r}
+zm_occurrences <- read_sf('zm_occurrences_usgs.shp') %>% st_make_valid() 
+
+north_america_bbox <- read_sf('north_america_bbox.shp') %>% st_make_valid() 
+
+us_major_cities_centroid <- read_sf('us_major_city_centroids.shp') %>% st_make_valid() 
+
+north_america_road_network <- read_sf('north_america_road_network.shp') %>% st_make_valid() 
+
+# Auxiliary plotting shapefiles
+
+land <- read_sf('natural_earth_land.shp') %>% st_intersection(north_america_bbox)
+
+large_lakes <- read_sf('natural_earth_large_lakes.shp') %>% st_make_valid() %>% st_intersection(north_america_bbox)
+
+small_lakes <- read_sf('natural_earth_small_lakes.shp') %>% st_make_valid() %>% st_intersection(north_america_bbox)
+
+large_rivers <- read_sf('natural_earth_large_rivers.shp') %>% st_make_valid() %>% st_intersection(north_america_bbox)
+
+small_rivers <- read_sf('natural_earth_small_rivers.shp') %>% st_make_valid() %>% st_intersection(north_america_bbox)
+
+lakes_combined <- bind_rows(large_lakes, small_lakes)
+
+```
+
+
+# Pre-processing
+
+```{r}
+
+zm_established <- zm_occurrences %>% filter(Status == 'established') %>% 
+  filter(Scientific == 'Dreissena polymorpha')
+
+zm_10 <- st_buffer(zm_established, dist = 10000) %>% st_union() %>% st_as_sf() %>% 
+  mutate(buffer_dist = '10 km')
+
+zm_20 <- st_buffer(zm_established, dist = 20000) %>% st_union() %>% st_as_sf() %>% 
+  mutate(buffer_dist = '20 km')
+
+zm_30 <- st_buffer(zm_established, dist = 30000) %>% st_union() %>% st_as_sf() %>% 
+  mutate(buffer_dist = '30 km')
+
+zm_40 <- st_buffer(zm_established, dist = 40000) %>% st_union() %>% st_as_sf() %>% 
+  mutate(buffer_dist = '40 km')
+
+zm_50 <- st_buffer(zm_established, dist = 50000) %>% st_union() %>% st_as_sf() %>% 
+  mutate(buffer_dist = '50 km')
+ 
+ 
+zm_buffer_collected <- rbind(zm_50, zm_40, zm_30, zm_20, zm_10)
+
+rm(zm_50, zm_40, zm_30, zm_20, zm_10)
+
+zm_buffer_collected$buffer_dist <- factor(zm_buffer_collected$buffer_dist, levels = c('50 km', '40 km', '30 km', '20 km', '10 km'))
+
+zm_buffer_collected_test <- st_difference(zm_buffer_collected, lakes_combined)
+
+write_sf(zm_buffer_collected_test, '/home/steven/Documents/github/zebra_mussel_network_modeling/data_directory/buffer_test.shp')
+
+```
+
+
+```{r}
+
+overlay_grid <- st_make_grid(north_america_bbox, cellsize = 2000, what = 'polygons',
+                             square = FALSE) %>% st_as_sf()
+
+overlay_grid <- overlay_grid %>% st_join(land, left = FALSE) 
+
+overlay_grid <- overlay_grid %>% rowid_to_column('uid') %>% select(uid)
+
+overlay_test <- st_join(overlay_grid, north_america_road_network)
+
+write_sf(overlay_test, '/home/steven/Documents/github/zebra_mussel_network_modeling/data_directory/gis_data/2km_grid_selection.shp')
+
+```
+
+# 
+
+
+```{r}
+
+zm_bbox <- st_bbox(north_america_bbox)
+
+
+buffer_plot <- ggplot() + geom_sf(data = land, fill = 'gray70', colour = 'gray15') +
+  geom_sf(data = large_rivers, colour = 'gray60') +
+  geom_sf(data = small_rivers, colour = 'gray60', alpha = 0.3) +
+    geom_sf(data = large_lakes, fill = 'gray50', colour = 'gray15') +
+  geom_sf(data = small_lakes, fill = 'gray50', colour = 'gray15') +
+  geom_sf(data = zm_buffer_collected_test, aes(fill = buffer_dist)) +
+  scale_fill_carto_d(palette = 'TealGrn', direction = -1, name = 'Buffer distance \n in km') +
+  theme_dark(base_family = extrafont::choose_font('Cantarell Light'), 
+               base_size = 12) +
+      coord_sf(xlim = c(zm_bbox[[1]], zm_bbox[[3]]),
+             ylim = c(zm_bbox[[2]], zm_bbox[[4]]), 
+             expand = FALSE) 
+
+
+
+```
+
+
