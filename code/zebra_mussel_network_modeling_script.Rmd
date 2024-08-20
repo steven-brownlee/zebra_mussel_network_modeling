@@ -39,7 +39,7 @@ loaded via a namespace (and not attached):
 # Set up data directory
 
 ```{r setup, include=FALSE}
-knitr::opts_knit$set(root.dir = '/home/steven/Documents/github/zebra_mussel_network_modeling/data_directory/gis_data/')
+knitr::opts_knit$set(root.dir = '/home/steven/Documents/common/thesis/ch2/gis_data/')
 ```
 
 # R library setup
@@ -55,27 +55,16 @@ library(sfnetworks)
 # Import shapefiles
 
 ```{r}
-zm_occurrences <- read_sf('zm_occurrences_usgs.shp') %>% st_make_valid() 
+zm_occurrences <- read_sf('data_directory/usgs_nas_dreissenid_occurrences.shp')
 
-north_america_bbox <- read_sf('north_america_bbox.shp') %>% st_make_valid() 
+north_america_bbox <- read_sf('data_directory/qgis_north_america_bbox.shp')
 
-us_major_cities_centroid <- read_sf('us_major_city_centroids.shp') %>% st_make_valid() 
+us_major_cities_centroid <- read_sf('data_directory/cec_populated_places.shp')
 
-north_america_road_network <- read_sf('north_america_road_network.shp') %>% st_make_valid() 
 
-# Auxiliary plotting shapefiles
+land <- read_sf('data_directory/qgis_cec_coastline.shp') %>% st_intersection(north_america_bbox)
 
-land <- read_sf('natural_earth_land.shp') %>% st_intersection(north_america_bbox)
-
-large_lakes <- read_sf('natural_earth_large_lakes.shp') %>% st_make_valid() %>% st_intersection(north_america_bbox)
-
-small_lakes <- read_sf('natural_earth_small_lakes.shp') %>% st_make_valid() %>% st_intersection(north_america_bbox)
-
-large_rivers <- read_sf('natural_earth_large_rivers.shp') %>% st_make_valid() %>% st_intersection(north_america_bbox)
-
-small_rivers <- read_sf('natural_earth_small_rivers.shp') %>% st_make_valid() %>% st_intersection(north_america_bbox)
-
-lakes_combined <- bind_rows(large_lakes, small_lakes)
+large_lakes <- read_sf('data_directory/cec_lakes_shapefile.shp') %>% st_intersection(north_america_bbox)
 
 ```
 
@@ -109,25 +98,38 @@ rm(zm_50, zm_40, zm_30, zm_20, zm_10)
 
 zm_buffer_collected$buffer_dist <- factor(zm_buffer_collected$buffer_dist, levels = c('50 km', '40 km', '30 km', '20 km', '10 km'))
 
-zm_buffer_collected_test <- st_difference(zm_buffer_collected, lakes_combined)
-
-write_sf(zm_buffer_collected_test, '/home/steven/Documents/github/zebra_mussel_network_modeling/data_directory/buffer_test.shp')
 
 ```
 
 
 ```{r}
 
-overlay_grid <- st_make_grid(north_america_bbox, cellsize = 2000, what = 'polygons',
+overlay_grid <- st_make_grid(north_america_bbox, cellsize = 10000, what = 'polygons',
                              square = FALSE) %>% st_as_sf()
 
-overlay_grid <- overlay_grid %>% st_join(land, left = FALSE) 
+write_sf(overlay_grid, 'scratch/10km_hexagon_grid.gpkg')
 
-overlay_grid <- overlay_grid %>% rowid_to_column('uid') %>% select(uid)
+# Nb for users: this line invokes code from the QGIS 
+# 'extract by location' function. It is significantly
+# slower than its GUI counterpart, unfortunately. Users
+# may therefore want to step away from this code and run
+# it directly in QGIS.
 
-overlay_test <- st_join(overlay_grid, north_america_road_network)
+overlay_selection <- qgis_run_algorithm(
+  "native:extractbylocation",
+  INPUT = 'scratch/10km_hexagon_grid.gpkg',
+  PREDICATE = 6,
+  INTERSECT = 'data_directory/qgis_cec_coastline.shp',
+  OUTPUT = 'scratch/10km_hexagon_selection.gpkg'
+)
 
-write_sf(overlay_test, '/home/steven/Documents/github/zebra_mussel_network_modeling/data_directory/gis_data/2km_grid_selection.shp')
+# In case you ran the function in QGIS:
+
+# overlay_selection <- read_sf('scratch/10km_hexagon_selection.gpkg')
+
+overlay_selection <- overlay_selection %>% rowid_to_column('uid') %>% select(uid)
+
+write_sf(overlay_selection, 'data_directory/10km_hexagon_selection.gpkg', driver = 'GPKG')
 
 ```
 
@@ -156,4 +158,28 @@ buffer_plot <- ggplot() + geom_sf(data = land, fill = 'gray70', colour = 'gray15
 
 ```
 
+```{r}
+
+test <- oe_read(file_path = '/home/steven/Documents/common/thesis/ch2/gis_data/downloads/open_street_map/north-america-latest.osm.pbf', layer = 'lines')
+
+```
+
+
+```{r}
+
+test_filter <- overlay_selection %>% filter(uid == 19060)
+
+oe_download_directory('/home/steven/Documents/common/thesis/ch2/gis_data/downloads/open_street_map_r')
+  
+write_sf(osm_grid, '/home/steven/Documents/common/thesis/ch2/gis_data/scratch/test_selection.shp')
+
+test_bbox <- st_bbox(test_filter)
+
+test_query <- opq(bbox = c(test_bbox[1], test_bbox[2], test_bbox[3], test_bbox[4])) %>% osmdata_sf()
+
+test_osmdata <- osmdata_sf(test_query)
+
+test <- oe_get(place = test_filter, boundary = test_filter)
+
+```
 
