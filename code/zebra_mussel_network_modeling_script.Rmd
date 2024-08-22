@@ -55,16 +55,35 @@ library(sfnetworks)
 # Import shapefiles
 
 ```{r}
-zm_occurrences <- read_sf('data_directory/usgs_nas_dreissenid_occurrences.shp')
+zm_occurrences <- read_sf('data_directory/usgs_nas_dreissenid_occurrences.shp') %>% st_transform(crs = 4326)
 
-north_america_bbox <- read_sf('data_directory/qgis_north_america_bbox.shp')
+write_sf(zm_occurrences, 'data_directory/usgs_nas_dreissenid_occurrences.shp')
 
-us_major_cities_centroid <- read_sf('data_directory/cec_populated_places.shp')
+north_america_bbox <- read_sf('data_directory/qgis_north_america_bbox.shp') %>% st_transform(crs = 4326)
+
+write_sf(north_america_bbox, 'data_directory/qgis_north_america_bbox.shp')
 
 
-land <- read_sf('data_directory/qgis_cec_coastline.shp') %>% st_intersection(north_america_bbox)
+us_major_cities_centroid <- read_sf('data_directory/cec_populated_places.shp') %>% st_transform(crs = 4326)
 
-large_lakes <- read_sf('data_directory/cec_lakes_shapefile.shp') %>% st_intersection(north_america_bbox)
+write_sf(us_major_cities_centroid, 'data_directory/cec_populated_places.shp')
+
+
+land <- read_sf('data_directory/qgis_cec_coastline.shp') %>% st_transform(crs = 4326)
+
+write_sf(land, 'data_directory/qgis_cec_coastline.shp')
+
+
+large_lakes <- read_sf('data_directory/cec_lakes_shapefile.shp') %>% st_transform(crs = 4326)
+
+write_sf(large_lakes, 'data_directory/cec_lakes_shapefile.shp')
+
+
+usdot_road_network <- read_sf('downloads/us_dot_road_network/NTAD_North_American_Roads_2691167086962748384.gpkg') %>% st_transform(crs = 4326)
+
+
+write_sf(usdot_road_network, 'data_directory/usdot_road_network.shp')
+
 
 ```
 
@@ -102,18 +121,13 @@ zm_buffer_collected$buffer_dist <- factor(zm_buffer_collected$buffer_dist, level
 ```
 
 
+
 ```{r}
 
-overlay_grid <- st_make_grid(north_america_bbox, cellsize = 10000, what = 'polygons',
+overlay_grid <- st_make_grid(north_america_bbox, cellsize = 2000, what = 'polygons',
                              square = FALSE) %>% st_as_sf()
 
-write_sf(overlay_grid, 'scratch/10km_hexagon_grid.gpkg')
-
-# Nb for users: this line invokes code from the QGIS 
-# 'extract by location' function. It is significantly
-# slower than its GUI counterpart, unfortunately. Users
-# may therefore want to step away from this code and run
-# it directly in QGIS.
+write_sf(overlay_grid, 'scratch/2km_hexagon_grid.gpkg')
 
 overlay_selection <- qgis_run_algorithm(
   "native:extractbylocation",
@@ -123,17 +137,32 @@ overlay_selection <- qgis_run_algorithm(
   OUTPUT = 'scratch/10km_hexagon_selection.gpkg'
 )
 
-# In case you ran the function in QGIS:
-
-# overlay_selection <- read_sf('scratch/10km_hexagon_selection.gpkg')
+overlay_selection <- read_sf('scratch/2km_hexagon_selection.gpkg')
 
 overlay_selection <- overlay_selection %>% rowid_to_column('uid') %>% select(uid)
 
-write_sf(overlay_selection, 'data_directory/10km_hexagon_selection.gpkg', driver = 'GPKG')
+write_sf(overlay_selection, 'data_directory/2km_hexagon_selection.gpkg', driver = 'GPKG')
 
 ```
 
 # 
+
+```{r}
+
+overlay_selection <- read_sf('data_directory/2km_hexagon_selection.gpkg') %>% st_transform(crs = 4326)
+
+write_sf(overlay_selection,'data_directory/2km_hexagon_selection.gpkg')
+
+usdot_road_network <- usdot_road_network %>% filter(SURFACE == 'Unpaved' | SURFACE == 'Paved')
+
+overlay_usdot <- st_join(overlay_selection, usdot_road_network, join = st_intersects)
+
+test <- overlay_usdot %>% drop_na()
+
+write_sf(test,'scratch/2km_hexagon_joined_test.gpkg')
+
+```
+
 
 
 ```{r}
@@ -165,21 +194,41 @@ test <- oe_read(file_path = '/home/steven/Documents/common/thesis/ch2/gis_data/d
 ```
 
 
+Run:
+
+usethis::edit_r_environ()
+
+OSMEXT_DOWNLOAD_DIRECTORY=/home/steven/Documents/common/thesis/ch2/gis_data/downloads/open_street_map_r
+
 ```{r}
 
-test_filter <- overlay_selection %>% filter(uid == 19060)
 
-oe_download_directory('/home/steven/Documents/common/thesis/ch2/gis_data/downloads/open_street_map_r')
-  
-write_sf(osm_grid, '/home/steven/Documents/common/thesis/ch2/gis_data/scratch/test_selection.shp')
+overlay_selection <- read_sf('data_directory/2km_hexagon_selection.gpkg')
 
-test_bbox <- st_bbox(test_filter)
+test_filter <- overlay_selection %>% filter(uid == 496538)
 
-test_query <- opq(bbox = c(test_bbox[1], test_bbox[2], test_bbox[3], test_bbox[4])) %>% osmdata_sf()
+            
+              
+      
 
-test_osmdata <- osmdata_sf(test_query)
+canada <- oe_vectortranslate('downloads/open_street_map_r/geofabrik_canada-latest.osm.pbf')
 
-test <- oe_get(place = test_filter, boundary = test_filter)
+canada_gpkg <- oe_read('downloads/open_street_map_r/geofabrik_canada-latest.gpkg')
+
+canada_gpkg_test <- canada_gpkg %>% 
+  filter(highway == "motorway" | highway == "tertiary" | highway == "residential" | 
+           highway == "primary" | highway == "unclassified" | highway ==  "road" |
+           highway == "trunk" | highway == "secondary" | highway == "motorway_link")
+
+write_sf(canada_gpk_test, 'data_directory/')
+
+bc <- oe_get('British Columbia', max_file_size = 4e+10, 
+                 query = "SELECT * FROM 'lines' WHERE highway = 'motorway') 
+                 OR highway = 'trunk' OR highway = 'primary' OR highway = 'secondary' OR highway = 'tertiary' OR highway = 'unclassified'  OR highway = 'residential' OR highway = 'motorway_link' OR highway = 'trunk_link' OR highway = 'primary_link' OR highway = 'secondary_link' OR highway = 'tertiary_link' OR highway = 'service' OR highway = 'track'")
+
+```
+
+```{r}
 
 ```
 
