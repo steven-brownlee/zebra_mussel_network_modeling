@@ -176,9 +176,12 @@ overlay_centroids <- readRDS('data_directory/2km_centroids_table.rds')
 
 
 entry_table <- tibble(uid = numeric(), lanes = numeric(), maxspeed = numeric(),
-                      type = factor(levels = c('motorway', 'trunk', 'primary', 
-                                             'secondary', 'tertiary', 
-                                             'unclassified', 'residential')))
+                      type = factor(levels = c('residential', 'unclassified', 
+                                               'tertiary', 'secondary', 
+                                               'primary', 'trunk', 'motorway')
+                                    ))
+
+
 
 osm_colnames <- c('osm_id', 'name', 'highway', 'lanes', 'maxspeed')
 
@@ -207,14 +210,18 @@ for (x in 1:5549984) {
   if (all((osm_colnames) %in% colnames(osm_query_filtered)) == TRUE) {
     
     # Filter for desired road types
-     osm_query_filtered <- osm_query_filtered %>% 
+    osm_query_filtered <- osm_query_filtered %>% 
        filter(highway == 'motorway' | highway == 'trunk' | 
                 highway == 'primary' | highway == 'secondary' | 
                 highway == 'tertiary' | highway == 'unclassified' |
                 highway == 'residential')
+    osm_query_filtered <- osm_query_filtered %>% select(lanes, maxspeed, highway)
      
-    # Retrieve lane numbers ---------------------------------------------------
-      osm_query_filtered$lanes <- as.numeric(osm_query_filtered$lanes) 
+    # Retrieve max lane numbers------------------------------------------------
+    osm_query_filtered$lanes <- as.numeric(osm_query_filtered$lanes) 
+    
+    osm_query_lanes <- osm_query_filtered %>% select(lanes) %>% 
+      st_drop_geometry() %>% drop_na() %>% max()
     
     # Pre-process speed data to remove 'mph', harmonize speeds in km/h --------
     osm_query_filtered <- osm_query_filtered %>% 
@@ -225,16 +232,21 @@ for (x in 1:5549984) {
     osm_query_filtered <- osm_query_filtered %>% 
         mutate(max_speed = case_when(mph == TRUE ~ maxspeed * 1.609344,
                                     mph == FALSE ~ maxspeed)) %>% 
-        select(-maxspeed)
-    osm_query_maxspeed <- osm_query_filtered %>% select(lanes) %>% 
-        drop_na() %>% max()
+      select(-maxspeed) %>% 
+      rename(maxspeed = max_speed)
+    
+    osm_query_maxspeed <- osm_query_filtered %>% select(maxspeed) %>% 
+      st_drop_geometry() %>% drop_na() %>% max()
     
     # Retrieve road types and set as factor based on capacity -----------------
-    osm_query_filtered$type <- factor(osm_query_type$type, 
-                                  levels = c('motorway', 'trunk', 'primary', 
-                                             'secondary', 'tertiary', 
-                                             'unclassified', 'residential'))
-    osm_query_type <- osm_query_filtered %>% select(type) %>% drop_na()
+    osm_query_filtered$highway <- factor(osm_query_filtered$highway, 
+                                  levels = c('residential', 'unclassified', 
+                                               'tertiary', 'secondary', 
+                                               'primary', 'trunk', 'motorway'))
+    osm_query_type <- osm_query_filtered %>% select(highway) %>% 
+      st_drop_geometry() %>% drop_na() %>% slice_max(highway) %>% unique() %>% 
+      deframe()
+    
     
     #--------------------------------------------------------------------------
     # Add entries to entry table
@@ -243,8 +255,6 @@ for (x in 1:5549984) {
                           maxspeed = osm_query_maxspeed,
                           type = osm_query_type)
     print(paste('Completed:', x))
-    rm(query_coords, q_lon, q_lat, osm_query, osm_query_filtered, osm_query_lanes,
-      osm_query_maxspeed)
     
     #--------------------------------------------------------------------------
   } else {
@@ -253,7 +263,7 @@ for (x in 1:5549984) {
                           lanes = NA, 
                           maxspeed = NA,
                           type = NA)
-    print(paste('No useable data at:', x, 'proceeding!'))
+    print(paste('No useable data at:', x, '...', 'Proceeding!'))
   }
   }
 ```
