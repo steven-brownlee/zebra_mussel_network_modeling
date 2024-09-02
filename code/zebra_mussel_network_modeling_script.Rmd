@@ -51,6 +51,8 @@ library(rcartocolor)
 library(sfnetworks)
 library(qgisprocess)
 library(osmdata)
+library(future)
+library(doFuture)
 
 ```
 
@@ -174,100 +176,6 @@ write_rds(overlay_centroids, 'data_directory/2km_centroids_table.rds')
 
 overlay_centroids <- readRDS('data_directory/2km_centroids_table.rds')
 
-
-entry_table <- tibble(uid = numeric(), lanes = numeric(), maxspeed = numeric(),
-                      type = factor(levels = c('residential', 'unclassified', 
-                                               'tertiary', 'secondary', 
-                                               'primary', 'trunk', 'motorway')
-                                    ))
-
-
-
-osm_colnames <- c('osm_id', 'name', 'highway', 'lanes', 'maxspeed')
-
-# Iterate through each of x number of centroid coordinate pairs, query 
-# OpenStreetMap database and retrieve all road objects within 1000 m radius of
-# centroid - approximately equivalent to half if hexagon polygon diameter.
-
-for (x in 1849995:3699990)  {
-  # Extract lat/lon information and OSM query
-  query_coords <- overlay_centroids %>% filter(uid == x)
-  q_lon <- as.numeric(query_coords$lon)
-  q_lat <- as.numeric(query_coords$lat)
-  osm_query <- opq_around(q_lon, q_lat, 
-                          radius = 1000, 
-                          timeout = 50, 
-                          key = 'highway') %>%
-  osmdata_sf()
-  
-  osm_query_filtered <- osm_query$osm_lines
-  
-  print(paste('Query', x, 'retrieved! Assessing...'))
-  
-  # Only proceed to next step if all of needed column types are present, ------
-  # if not write 'NA' in entry table 
-  
-  if (all((osm_colnames) %in% colnames(osm_query_filtered)) == TRUE) {
-    
-    # Filter for desired road types
-    osm_query_filtered <- osm_query_filtered %>% 
-       filter(highway == 'motorway' | highway == 'trunk' | 
-                highway == 'primary' | highway == 'secondary' | 
-                highway == 'tertiary' | highway == 'unclassified' |
-                highway == 'residential')
-    osm_query_filtered <- osm_query_filtered %>% select(lanes, maxspeed, highway)
-     
-    # Retrieve max lane numbers------------------------------------------------
-    osm_query_filtered$lanes <- as.numeric(osm_query_filtered$lanes) 
-    
-    osm_query_lanes <- osm_query_filtered %>% select(lanes) %>% 
-      st_drop_geometry() %>% drop_na() %>% max()
-    
-    # Pre-process speed data to remove 'mph', harmonize speeds in km/h --------
-    osm_query_filtered <- osm_query_filtered %>% 
-        mutate(mph = grepl('mph', osm_query_filtered$maxspeed))
-    osm_query_filtered$maxspeed <- str_replace(osm_query_filtered$maxspeed, 
-                                               'mph', '')
-    osm_query_filtered$maxspeed <- as.numeric(osm_query_filtered$maxspeed)
-    osm_query_filtered <- osm_query_filtered %>% 
-        mutate(max_speed = case_when(mph == TRUE ~ maxspeed * 1.609344,
-                                    mph == FALSE ~ maxspeed)) %>% 
-      select(-maxspeed) %>% 
-      rename(maxspeed = max_speed)
-    
-    osm_query_maxspeed <- osm_query_filtered %>% select(maxspeed) %>% 
-      st_drop_geometry() %>% drop_na() %>% max()
-    
-    # Retrieve road types and set as factor based on capacity -----------------
-    osm_query_filtered$highway <- factor(osm_query_filtered$highway, 
-                                  levels = c('residential', 'unclassified', 
-                                               'tertiary', 'secondary', 
-                                               'primary', 'trunk', 'motorway'))
-    osm_query_type <- osm_query_filtered %>% select(highway) %>% 
-      st_drop_geometry() %>% drop_na() %>% slice_max(highway) %>% unique() %>% 
-      deframe()
-    
-    
-    #--------------------------------------------------------------------------
-    # Add entries to entry table
-    entry_table <- entry_table %>% add_row(uid = x, 
-                          lanes = osm_query_lanes, 
-                          maxspeed = osm_query_maxspeed,
-                          type = osm_query_type)
-    print(paste('Completed:', x))
-    
-    #--------------------------------------------------------------------------
-  } else {
-    # Create empty entry if no useable data is present.
-    entry_table <- entry_table %>% add_row(uid = x, 
-                          lanes = NA, 
-                          maxspeed = NA,
-                          type = NA)
-    print(paste('No useable data at:', x, '...', 'Proceeding!'))
-  }
-}
-
-write_rds(entry_table, 'data_directory/entry_table_p2.rds')
 ```
 # 
 
@@ -373,6 +281,8 @@ return(entry_table)
 
 divided_dataset <- tibble(x = seq(1:5549984))
 
+
+
 num_groups = 24
 
 divided_dataset <- divided_dataset %>% mutate(grouping = (row_number()-1) %/% (n()/num_groups)) %>% 
@@ -427,91 +337,3 @@ buffer_plot <- ggplot() + geom_sf(data = land, fill = 'gray70', colour = 'gray15
 
 
 ```
-
-```{r}
-
-overlay_selection <- read_sf('data_directory/2km_hexagon_selection.gpkg')
-
-
-
-
-```
-
-
-Run:
-
-usethis::edit_r_environ()
-
-OSMEXT_DOWNLOAD_DIRECTORY=/home/steven/Documents/common/thesis/ch2/gis_data/downloads/open_street_map_r
-
-```{r}
-
-
-overlay_selection <- read_sf('data_directory/2km_hexagon_selection.gpkg')
-
-test_filter <- overlay_selection %>% filter(uid == 496538)
-
-            
-              
-      
-
-canada <- oe_vectortranslate('downloads/open_street_map_r/geofabrik_canada-latest.osm.pbf')
-
-canada_gpkg <- oe_read('downloads/open_street_map_r/geofabrik_canada-latest.gpkg')
-
-canada_gpkg_test <- canada_gpkg %>% 
-  filter(highway == "motorway" | highway == "tertiary" | highway == "residential" | 
-           highway == "primary" | highway == "unclassified" | highway ==  "road" |
-           highway == "trunk" | highway == "secondary" | highway == "motorway_link")
-
-write_sf(canada_gpk_test, 'data_directory/')
-
-bc <- oe_get('British Columbia', max_file_size = 4e+10, 
-                 query = "SELECT * FROM 'lines' WHERE highway = 'motorway') 
-                 OR highway = 'trunk' OR highway = 'primary' OR highway = 'secondary' OR highway = 'tertiary' OR highway = 'unclassified'  OR highway = 'residential' OR highway = 'motorway_link' OR highway = 'trunk_link' OR highway = 'primary_link' OR highway = 'secondary_link' OR highway = 'tertiary_link' OR highway = 'service' OR highway = 'track'")
-
-```
-
-```{r}
-    if (length(row_number(osm_query_filtered)) > 0 ) {
-      osm_query_filtered$lanes <- as.numeric(osm_query_filtered$lanes) 
-      osm_query_filtered$type <- factor(osm_query_type$type, 
-                                  levels = c('motorway', 'trunk', 'primary', 
-                                             'secondary', 'tertiary', 
-                                             'unclassified', 'residential'))
-      osm_query_filtered <- osm_query_filtered %>% 
-        mutate(mph = grepl('mph', osm_query_filtered$maxspeed))
-      osm_query_filtered$maxspeed <- str_replace(osm_query_filtered$maxspeed, 'mph', '')
-      osm_query_filtered$maxspeed <- as.numeric(osm_query_filtered$maxspeed)
-      osm_query_filtered <- osm_query_filtered %>% 
-        mutate(max_speed = case_when(mph == TRUE ~ maxspeed * 1.609344,
-                                    mph == FALSE ~ maxspeed)) %>% 
-        select(-maxspeed)
-      osm_query_maxspeed <- osm_query_filtered %>% select(lanes) %>% 
-        drop_na() %>% max()
-      osm_query_type <- osm_query_filtered %>% select(type) %>% drop_na()
- 
-    } else {
-      osm_query_lanes <- NA
-      osm_query_maxspeed <- NA
-      osm_query_type <- NA
-    }
-    entry_table %>% add_row(uid = x, 
-                          lanes = osm_query_lanes, 
-                          maxspeed = osm_query_maxspeed,
-                          type = osm_query_type)
-    print(paste('Completed:', x))
-    rm(query_coords, q_lon, q_lat, osm_query, osm_query_filtered, osm_query_lanes,
-      osm_query_maxspeed)
-    }
-    
-  } else {
- entry_table %>% add_row(uid = x, 
-                          lanes = NA, 
-                          maxspeed = NA,
-                          type = NA)
-    
-    
-  }
-```
-
