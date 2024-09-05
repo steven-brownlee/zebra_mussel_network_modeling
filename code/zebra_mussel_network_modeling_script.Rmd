@@ -279,11 +279,11 @@ return(entry_table)
 ```{r}
 
 
-divided_dataset <- tibble(x = seq(1:5549984))
+divided_dataset <- tibble(x = seq(1:18135029))
 
 
 
-num_groups = 24
+num_groups = 10
 
 divided_dataset <- divided_dataset %>% mutate(grouping = (row_number()-1) %/% (n()/num_groups)) %>% 
    group_by(grouping) %>% 
@@ -314,6 +314,56 @@ combined_table <- foreach(a = sequence_start,
 
 ```
 
+```{r}
+
+
+
+###
+
+divided_dataset <- tibble(x = seq(1:18135029))
+
+num_groups = 10
+
+divided_dataset <- divided_dataset %>% mutate(grouping = (row_number()-1) %/% (n()/num_groups)) %>% 
+   group_by(grouping) %>% 
+  summarize(min_x = min(x), max_x = max(x)) %>% select(-grouping)
+
+
+sequence_start = pull(divided_dataset, min_x)
+
+sequence_end = pull(divided_dataset, max_x)
+
+
+
+###
+
+na_data <- read_sf('/home/steven/Downloads/na_highway_filtered_final.gpkg')
+
+na_data <- na_data %>% select(-waterway, -aerialway, -barrier, -man_made, -z_order) %>% rowid_to_column('grouping_id') %>% 
+  mutate(group = case_when(grouping_id >= sequence_start[1] & grouping_id <= sequence_end[1] ~ 1,
+                           grouping_id >= sequence_start[2] & grouping_id <= sequence_end[2] ~ 2,
+                           grouping_id >= sequence_start[3] & grouping_id <= sequence_end[3] ~ 3,
+                           grouping_id >= sequence_start[4] & grouping_id <= sequence_end[4] ~ 4,
+                           grouping_id >= sequence_start[5] & grouping_id <= sequence_end[5] ~ 5,
+                           grouping_id >= sequence_start[6] & grouping_id <= sequence_end[6] ~ 6,
+                           grouping_id >= sequence_start[7] & grouping_id <= sequence_end[7] ~ 7,
+                           grouping_id >= sequence_start[8] & grouping_id <= sequence_end[8] ~ 8,
+                           grouping_id >= sequence_start[9] & grouping_id <= sequence_end[9] ~ 9,
+                           grouping_id >= sequence_start[10] & grouping_id <= sequence_end[10] ~ 10)) %>% select(-grouping_id)
+
+for (i in 1:10)  {
+ selection <- na_data %>% filter(group == i)
+ filename <- paste0('data_directory/na_highway_subset_', as.character(i), '.gpkg')
+ write_sf(selection, filename)
+ print(paste('Written:', filename))
+}
+
+
+na_lanes <- na_data %>% filter(grepl('lanes', other_tags)) %>% separate_longer_delim(other_tags, delim = ',') %>%  filter(grepl('lanes', other_tags))
+
+na_maxspeed <- na_data %>% filter(grepl('maxspeed', other_tags)) %>% separate_longer_delim(other_tags, delim = ',') %>%  filter(grepl('maxspeed', other_tags))
+
+```
 
 
 ```{r}
