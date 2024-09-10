@@ -50,7 +50,6 @@ library(tidyverse)
 library(rcartocolor)
 library(sfnetworks)
 library(qgisprocess)
-library(osmdata)
 library(future)
 library(doFuture)
 
@@ -358,12 +357,248 @@ for (i in 1:10)  {
  print(paste('Written:', filename))
 }
 
+```
 
-na_lanes <- na_data %>% filter(grepl('lanes', other_tags)) %>% separate_longer_delim(other_tags, delim = ',') %>%  filter(grepl('lanes', other_tags))
 
-na_maxspeed <- na_data %>% filter(grepl('maxspeed', other_tags)) %>% separate_longer_delim(other_tags, delim = ',') %>%  filter(grepl('maxspeed', other_tags))
+```{r}
+
+na_table_total <- tibble(osm_id = character(),
+                         type = factor(levels = c('residential', 'unclassified', 
+                                               'tertiary', 'secondary', 
+                                               'primary', 'trunk', 'motorway')),
+                         max_speed = numeric(),
+                         lanes = numeric(),
+                         lon = numeric(),
+                         lat = numeric())
+
+highway_data_list = list.files('data_directory/', 
+                      pattern = 'na_highway_subset_*',
+                      full.names = TRUE,
+                      recursive = TRUE)
+
+
+for (i in 1:length(highway_data_list)) {
+  
+  na_subset <- read_sf(highway_data_list[i])
+  
+  na_ids <- na_subset %>% select(osm_id)
+
+  na_lanes <- na_subset %>% filter(grepl('lanes', other_tags)) %>% 
+    separate_longer_delim(other_tags, delim = ',') %>%  
+    filter(grepl('"lanes"=>', other_tags)) %>%  
+    mutate(across('other_tags', str_replace, '"lanes"=>', '')) %>% 
+    mutate(across('other_tags', str_replace, '"', '')) %>% 
+    mutate(across('other_tags', str_replace, '"', '')) %>% 
+    rename(lanes = other_tags) %>% select(osm_id, lanes) %>% 
+    st_drop_geometry()
+
+  na_semicolon <- na_lanes 
+
+  na_semicolon$lanes <- sub("\\;.*", "", na_semicolon$lanes)
+
+  na_lanes_filtered <- na_lanes %>% filter(!grepl(';', lanes))
+
+  na_lanes <- rbind(na_semicolon, na_lanes_filtered)
+
+  na_lanes$lanes <- as.numeric(na_lanes$lanes)
+
+  ###
+
+  na_maxspeed <- na_subset %>% filter(grepl('maxspeed', other_tags)) %>% 
+    separate_longer_delim(other_tags, delim = ',') %>% 
+    filter(grepl('"maxspeed"=>', other_tags)) %>% 
+    mutate(across('other_tags', str_replace, '"maxspeed"=>', '')) %>% 
+    rename(max_speed = other_tags)  %>% 
+    filter(!grepl('unposted', max_speed)) %>% 
+    filter(!grepl('slow', max_speed)) %>% 
+    filter(!grepl('implicit', max_speed)) %>% 
+    filter(!grepl('default', max_speed)) %>% 
+    select(osm_id, max_speed) %>% 
+    st_drop_geometry()
+
+  na_maxspeed_kmh <- na_maxspeed %>% filter(!grepl('mph', max_speed)) %>% 
+    mutate(across('max_speed', str_replace, '"', '')) %>% 
+    mutate(across('max_speed', str_replace, '"', ''))
+
+  na_maxspeed_kmh$max_speed <- gsub("[^0-9.-]", NA, na_maxspeed_kmh$max_speed)
+
+  na_maxspeed_kmh <- na_maxspeed_kmh %>% drop_na()
+
+  na_maxspeed_mph <- na_maxspeed %>% filter(grepl('mph', max_speed)) %>% 
+    mutate(across('max_speed', str_replace, ' mph', ''))
+
+  na_maxspeed_mph_filtered <- na_maxspeed_mph %>% filter(!grepl(';', max_speed))
+
+  na_maxspeed_mph_semicolon <- na_maxspeed_mph %>% filter(grepl(';', max_speed))
+
+  na_maxspeed_mph_semicolon$max_speed <- sub("\\;.*", "", na_maxspeed_mph_semicolon$max_speed)
+
+  na_maxspeed_mph_semicolon <- na_maxspeed_mph_semicolon %>%
+    mutate(across('max_speed', str_replace, '"', ''))
+
+  na_maxspeed_mph <- rbind(na_maxspeed_mph_filtered, na_maxspeed_mph_semicolon)
+
+  na_maxspeed_mph <- na_maxspeed_mph %>% 
+    mutate(across('max_speed', str_replace, '"', '')) %>% 
+    mutate(across('max_speed', str_replace, '"', ''))
+
+  na_maxspeed_mph$max_speed <- as.numeric(na_maxspeed_mph$max_speed)
+
+  na_maxspeed_mph <- na_maxspeed_mph %>% 
+    mutate(max_speed_kmh = max_speed*1.609344) %>% 
+    select(osm_id, max_speed_kmh) %>% 
+    rename(max_speed = max_speed_kmh)
+
+  na_maxspeed_combined <- rbind(na_maxspeed_mph, na_maxspeed_kmh)
+
+  na_maxspeed_combined <- na_maxspeed_combined %>% filter(max_speed > 120)
+
+  ###
+
+  na_type <- na_subset %>% select(osm_id, highway) %>% rename(type = highway)
+
+  na_type$type <- factor(na_type$type, 
+                                  levels = c('residential', 'unclassified', 
+                                               'tertiary', 'secondary', 
+                                               'primary', 'trunk', 'motorway'))
+
+  na_type <- na_type %>% st_drop_geometry()
+
+  na_data_final <- reduce(list(na_ids, na_type, na_maxspeed_combined, na_lanes), 
+                          dplyr::left_join, by = 'osm_id') %>% drop_na()
+
+  na_table_int <- st_centroid(na_data_final) %>% 
+    dplyr::mutate(lon = sf::st_coordinates(.)[,1],
+                lat = sf::st_coordinates(.)[,2]) %>% 
+    st_drop_geometry()
+  
+  na_table_total <- rbind(na_table_total, na_table_int)
+  
+  print(paste('Completed:', i))
+  
+}
+
+rm(na_subset)
+
+gc()
+
+na_points_total <- st_as_sf(na_table_total, coords = c('lon', 'lat'), 
+                            crs = 4326) %>% drop_na()
+
+write_sf(na_points_total, 'data_directory/osm_points_final.gpkg')
+
 
 ```
+
+
+```{r}
+
+hexagon_selection <- read_sf('data_directory/2km_hexagon_selection.gpkg') %>% rowid_to_column()
+
+
+na_points_total <- read_sf('data_directory/osm_points_final.gpkg') 
+
+divided_dataset <- tibble(x = seq(1:5549984))
+
+num_groups = 40
+
+divided_dataset <- divided_dataset %>% mutate(grouping = (row_number()-1) %/% (n()/num_groups)) %>% 
+   group_by(grouping) %>% 
+  summarize(min_x = min(x), max_x = max(x)) %>% select(-grouping)
+
+
+sequence_start = pull(divided_dataset, min_x)
+
+sequence_end = pull(divided_dataset, max_x)
+
+hexagon_selection <- hexagon_selection %>% mutate(group_id = case_when(
+  rowid >= sequence_start[1] & rowid <= sequence_end[1] ~ 1,
+  rowid >= sequence_start[2] & rowid <= sequence_end[2] ~ 2,
+  rowid >= sequence_start[3] & rowid <= sequence_end[3] ~ 3,
+  rowid >= sequence_start[4] & rowid <= sequence_end[4] ~ 4,
+  rowid >= sequence_start[5] & rowid <= sequence_end[5] ~ 5,
+  rowid >= sequence_start[6] & rowid <= sequence_end[6] ~ 6,
+  rowid >= sequence_start[7] & rowid <= sequence_end[7] ~ 7,
+  rowid >= sequence_start[8] & rowid <= sequence_end[8] ~ 8,
+  rowid >= sequence_start[9] & rowid <= sequence_end[9] ~ 9,
+  rowid >= sequence_start[10] & rowid <= sequence_end[10] ~ 10,
+  rowid >= sequence_start[11] & rowid <= sequence_end[11] ~ 11,
+  rowid >= sequence_start[12] & rowid <= sequence_end[12] ~ 12,
+  rowid >= sequence_start[13] & rowid <= sequence_end[13] ~ 13,
+  rowid >= sequence_start[14] & rowid <= sequence_end[14] ~ 14,
+  rowid >= sequence_start[15] & rowid <= sequence_end[15] ~ 15,
+  rowid >= sequence_start[16] & rowid <= sequence_end[16] ~ 16,
+  rowid >= sequence_start[17] & rowid <= sequence_end[17] ~ 17,
+  rowid >= sequence_start[18] & rowid <= sequence_end[18] ~ 18,
+  rowid >= sequence_start[19] & rowid <= sequence_end[19] ~ 19,
+  rowid >= sequence_start[20] & rowid <= sequence_end[20] ~ 20,
+  rowid >= sequence_start[21] & rowid <= sequence_end[21] ~ 21,
+  rowid >= sequence_start[22] & rowid <= sequence_end[22] ~ 22,
+  rowid >= sequence_start[23] & rowid <= sequence_end[23] ~ 23,
+  rowid >= sequence_start[24] & rowid <= sequence_end[24] ~ 24,
+  rowid >= sequence_start[25] & rowid <= sequence_end[25] ~ 25,
+  rowid >= sequence_start[26] & rowid <= sequence_end[26] ~ 26,
+  rowid >= sequence_start[27] & rowid <= sequence_end[27] ~ 27,
+  rowid >= sequence_start[28] & rowid <= sequence_end[28] ~ 28,
+  rowid >= sequence_start[29] & rowid <= sequence_end[29] ~ 29,
+  rowid >= sequence_start[30] & rowid <= sequence_end[30] ~ 30,
+  rowid >= sequence_start[31] & rowid <= sequence_end[31] ~ 31,
+  rowid >= sequence_start[32] & rowid <= sequence_end[32] ~ 32,
+  rowid >= sequence_start[33] & rowid <= sequence_end[33] ~ 33,
+  rowid >= sequence_start[34] & rowid <= sequence_end[34] ~ 34,
+  rowid >= sequence_start[35] & rowid <= sequence_end[35] ~ 35,
+  rowid >= sequence_start[36] & rowid <= sequence_end[36] ~ 36,
+  rowid >= sequence_start[37] & rowid <= sequence_end[37] ~ 37,
+  rowid >= sequence_start[38] & rowid <= sequence_end[38] ~ 38,
+  rowid >= sequence_start[39] & rowid <= sequence_end[39] ~ 39,
+  rowid >= sequence_start[40] & rowid <= sequence_end[40] ~ 40))
+
+hexagon_simplified <- hexagon_selection %>% group_by(group_id) %>% summarize()
+
+hexagon_grouped <- st_join(hexagon_selection, hexagon_simplified, join = st_intersects,
+                             left = TRUE)
+
+na_points_grouped <- st_join(na_points_total, hexagon_simplified, join = st_intersects,
+                             left = TRUE)
+
+write_sf(hexagon_grouped, 'data_directory/2km_hexagon_grouped.gpkg')
+
+write_sf(na_points_grouped, 'data_directory/osm_points_grouped.gpkg')
+
+###
+
+osm_grid <- read_sf('data_directory/2km_hexagon_grouped.gpkg')
+osm_points <- read_sf('data_directory/osm_points_grouped.gpkg')
+
+###
+
+osm_grid = hexagon_selection
+osm_points = na_points_grouped
+
+plan(multicore, workers = 8)
+options(future.globals.maxSize = 2e+9)
+registerDoFuture()
+
+
+combined_table <- foreach(a = 1:40,
+                          .combine = rbind) %dofuture% {
+                            
+      hexagon_filtered <- osm_grid %>% filter(group_id == a)
+      na_points_filtered <- osm_points %>% filter(group_id == a)
+      joined_points <- st_join(na_points_filtered, hexagon_filtered, 
+                               left = TRUE,
+                               join = st_intersects) %>% 
+        st_drop_geometry()
+      
+      hexagon_sum <- joined_points %>% group_by(rowid) %>% 
+        summarize_at(c('max_speed', 'type', 'lanes'),
+                     max, na.rm = TRUE)
+      return(hexagon_sum)
+      }
+
+
+```
+
 
 
 ```{r}
