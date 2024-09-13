@@ -223,6 +223,50 @@ for (i in 1:80)  {
   print(paste('Completed:', i))
 }
 
+osm_slice_list = list.files('scratch/', 
+                      pattern = 'group_slice_*',
+                      full.names = TRUE,
+                      recursive = TRUE)
+
+osm_table <- tibble(grouping_id = numeric(),
+                    osm_id = character(),
+                    name = character(),
+                    highway = character(),
+                    other_tags = character(),
+                    group_number = numeric(),
+                    lon = numeric(),
+                    lat = numeric())
+
+plan(multisession, workers = 8)
+options(future.globals.maxSize = 2e+9)
+
+for (i in 1:80) {
+  osm_grouped_table <- read_sf(osm_slice_list[i])
+
+combined_table <- foreach(a = unique(osm_grouped_table$grouping_id),
+                          .combine = rbind) %dofuture% {
+                            osm_segmented <- 
+                              qgis_run_algorithm("native:splitlinesbylength",
+                                                 INPUT = filter(osm_grouped_table,
+                                                                grouping_id == a),
+                                                 LENGTH = 1000) %>% 
+                              st_as_sf()
+                            osm_points <- 
+                              qgis_run_algorithm("native:pointsalonglines",
+                                                 INPUT = osm_segmented,
+                                                DISTANCE = 1000) %>% 
+                              st_as_sf() %>% 
+                              mutate(lon = sf::st_coordinates(.)[,1],
+                                     lat = sf::st_coordinates(.)[,2]) %>% 
+                              st_drop_geometry() %>% 
+                              select(grouping_id, osm_id, name, highway, 
+                                     other_tags, group_index, lon, lat)
+                            return(osm_points)
+                            qgis_clean_tmp()
+                          }
+osm_table <- rbind(osm_table, combined_table)
+print(paste('Completed:', i))
+}
 
 ###
 
@@ -242,10 +286,6 @@ osm_table <- tibble(grouping_id = numeric(),
                     group_number = numeric(),
                     lon = numeric(),
                     lat = numeric())
-for (i in 1:2487683)  {
-  group_slice <- na_data %>% filter(group_number == i)
-  group_slice <- group_slice %>% st_transform(crs = 'ESRI:102008')
-}
 
 
 for (i in 1:2487683)  {
