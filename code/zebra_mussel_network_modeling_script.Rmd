@@ -249,13 +249,15 @@ options(future.globals.maxSize = 2e+9)
 for (i in 1:500) {
   osm_grouped_table <- read_sf(osm_slice_list[i])
   osm_ids <- unique(osm_grouped_table$group_number)
+  print(paste('Starting slice:', i))
 
 combined_table <- foreach(a = osm_ids,
-                          .combine = rbind) %dofuture% {
+                          .combine = rbind) %dopar% {
+                            print(paste('Starting processing:', a))
                             osm_segmented <- 
                               qgis_run_algorithm("native:splitlinesbylength",
                                                  INPUT = filter(osm_grouped_table,
-                                                                grouping_id == a),
+                                                                group_number == a),
                                                  LENGTH = 1000) %>% 
                               st_as_sf()
                             osm_points <- 
@@ -266,13 +268,14 @@ combined_table <- foreach(a = osm_ids,
                               mutate(lon = sf::st_coordinates(.)[,1],
                                      lat = sf::st_coordinates(.)[,2]) %>% 
                               st_drop_geometry() %>% 
-                              select(grouping_id, osm_id, name, highway, 
-                                     other_tags, group_index, lon, lat)
+                              select(group_number, osm_id, name, highway, 
+                                     other_tags, lon, lat)
                             return(osm_points)
                             qgis_clean_tmp()
+                            print(paste('Completed group:', a))
                           }
 osm_table <- rbind(osm_table, combined_table)
-print(paste('Completed:', i))
+print(paste('Completed: slice:', i))
 }
 
 ###
