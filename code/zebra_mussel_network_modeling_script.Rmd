@@ -52,6 +52,8 @@ library(sfnetworks)
 library(qgisprocess)
 library(future)
 library(doFuture)
+library(purrr)
+library(furrr)
 
 ```
 
@@ -229,7 +231,7 @@ for (i in 1:500)  {
   print(paste('Completed:', i))
 }
 
-osm_slice_list = list.files('scratch/', 
+osm_slice_list = list.files('/home/steven/Documents/common/thesis/ch2/gis_data/', 
                       pattern = 'group_slice_*',
                       full.names = TRUE,
                       recursive = TRUE)
@@ -242,13 +244,53 @@ osm_table <- tibble(grouping_id = numeric(),
                     group_number = numeric(),
                     lon = numeric(),
                     lat = numeric())
+ 
+osm_processor <- function(linestring) {
+  osm_linestring <- read_sf(linestring)
+  group_indices <- unique(osm_linestring$group_number)
+  osm_list = vector('list', length = length(group_indices))
+  counter = 1
 
-plan(multisession, workers = 8)
-options(future.globals.maxSize = 2e+9)
+    for (i in group_indices) {
+      suppressWarnings({
+        osm_segmented <-  qgis_run_algorithm("native:splitlinesbylength",
+                     INPUT = filter(osm_linestring, 
+                                    group_number == i),
+                     LENGTH = 1000) %>% st_as_sf()
+        osm_points <- qgis_run_algorithm("native:pointsalonglines",
+                                 INPUT = osm_segmented,
+                                 DISTANCE = 1000) %>% 
+          st_as_sf() %>% 
+         mutate(lon = sf::st_coordinates(.)[,1],
+                lat = sf::st_coordinates(.)[,2]) %>% 
+        st_drop_geometry() %>% 
+        select(group_number, osm_id, name, highway, 
+               other_tags, lon, lat)
+        osm_list[[counter]] <- osm_points
+        print(paste('Completed:', counter))
+        counter = counter + 1
+        qgis_clean_tmp()
+      })
+  }
+  osm_dataframe <- bind_rows(osm_list)
+  print(paste('Completed slice!'))
+  return(osm_dataframe)
+}
 
-for (i in 1:500) {
+test <- osm_slice_list[4]
+
+
+
+plan(multisession, workers = 4)
+
+osm_large_list <- future_map(osm_processor(test), .progress = TRUE)
+
+
+
+for (i in 1:5) {
   osm_grouped_table <- read_sf(osm_slice_list[i])
   osm_ids <- unique(osm_grouped_table$group_number)
+  osm_ids <- osm_ids[1:25]
   print(paste('Starting slice:', i))
 
 combined_table <- foreach(a = osm_ids,
