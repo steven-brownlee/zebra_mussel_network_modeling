@@ -214,6 +214,10 @@ divided_dataset <- tibble(x = seq(1:2487683))
 
 num_groups = 500
 
+divided_dataset <- tibble(x = seq(1:500))
+
+num_groups = 3
+
 divided_dataset <- divided_dataset %>% mutate(grouping = (row_number()-1) %/% (n()/num_groups)) %>% 
    group_by(grouping) %>% 
   summarize(min_x = min(x), max_x = max(x)) %>% select(-grouping)
@@ -270,6 +274,7 @@ osm_processor <- function(linestring) {
         print(paste('Completed:', counter))
         counter = counter + 1
         qgis_clean_tmp()
+        gc()
       })
   }
   osm_dataframe <- bind_rows(osm_list)
@@ -277,222 +282,16 @@ osm_processor <- function(linestring) {
   return(osm_dataframe)
 }
 
-test <- osm_slice_list[4]
 
+plan(multisession, workers = 6)
 
+slice_one <- osm_slice_list[1:167]
+slice_two <- osm_slice_list[168:334]
+slice_three <- osm_slice_list[334:500]
 
-plan(multisession, workers = 4)
-
-osm_large_list <- future_map(osm_processor(test), .progress = TRUE)
-
-
-
-for (i in 1:5) {
-  osm_grouped_table <- read_sf(osm_slice_list[i])
-  osm_ids <- unique(osm_grouped_table$group_number)
-  osm_ids <- osm_ids[1:25]
-  print(paste('Starting slice:', i))
-
-combined_table <- foreach(a = osm_ids,
-                          .combine = rbind) %dopar% {
-                            print(paste('Starting processing:', a))
-                            osm_segmented <- 
-                              qgis_run_algorithm("native:splitlinesbylength",
-                                                 INPUT = filter(osm_grouped_table,
-                                                                group_number == a),
-                                                 LENGTH = 1000) %>% 
-                              st_as_sf()
-                            osm_points <- 
-                              qgis_run_algorithm("native:pointsalonglines",
-                                                 INPUT = osm_segmented,
-                                                DISTANCE = 1000) %>% 
-                              st_as_sf() %>% 
-                              mutate(lon = sf::st_coordinates(.)[,1],
-                                     lat = sf::st_coordinates(.)[,2]) %>% 
-                              st_drop_geometry() %>% 
-                              select(group_number, osm_id, name, highway, 
-                                     other_tags, lon, lat)
-                            return(osm_points)
-                            qgis_clean_tmp()
-                            print(paste('Completed group:', a))
-                          }
-osm_table <- rbind(osm_table, combined_table)
-print(paste('Completed: slice:', i))
-}
+osm_large_list <- future_map(osm_processor(osm_slice_list), .progress = TRUE)
 
 ###
-
-na_data <- read_sf('data_directory/na_highway_filtered_final.gpkg')
-
-na_data <- na_data %>% select(-waterway, -aerialway, -barrier, -man_made, -z_order) %>% rowid_to_column('grouping_id')
-
-na_data <- read_sf('data_directory/na_highway_cleaned.gpkg')
-
-na_data <- na_data %>% group_by(name) %>% mutate(group_number = cur_group_id())
-
-osm_table <- tibble(grouping_id = numeric(),
-                    osm_id = character(),
-                    name = character(),
-                    highway = character(),
-                    other_tags = character(),
-                    group_number = numeric(),
-                    lon = numeric(),
-                    lat = numeric())
-
-
-for (i in 1:2487683)  {
-  group_slice <- na_data %>% filter(group_number == i)
-  group_slice <- group_slice %>% st_transform(crs = 'ESRI:102008')
-  osm_segmented <- qgis_run_algorithm("native:splitlinesbylength",
-    INPUT = group_slice,
-    LENGTH = 1000) %>% 
-    st_as_sf()
-  osm_points <- qgis_run_algorithm(
-  "native:pointsalonglines",
-  INPUT = osm_segmented,
-  OUTPUT = 
-  DISTANCE = 1000) %>% st_as_sf() %>% 
-    mutate(lon = sf::st_coordinates(.)[,1],
-                lat = sf::st_coordinates(.)[,2]) %>% 
-    st_drop_geometry() %>% select(grouping_id, osm_id, name, highway, other_tags,
-                                  group_index, lon, lat)
-  osm_table <- rbind(osm_table, osm_points)
-  qgis_clean_tmp()
-  print(paste('Completed:', i, 'of 2487683'))
-  }
-
-osm_segmented <- qgis_run_algorithm(
-  "native:splitlinesbylength",
-  INPUT = test_select,
-  LENGTH = 1000,
-  OUTPUT = paste0('scratch/osm_lines_500m_intervals.gpkg')
-  )
-
-osm_points <- qgis_run_algorithm(
-  "native:pointsalonglines",
-  INPUT = 'scratch/test_lines_500m_intervals.gpkg',
-  DISTANCE = 1000,
-  OUTPUT = 'scratch/test_points_500m_intervals_2.gpkg')
-
-
-
-osm_points <- qgis_run_algorithm(
-  "native:dissolve",
-  INPUT = na_data,
-  FIELD = 'name',
-  OUTPUT = 'scratch/osm_lines_grouped_name.gpkg')
-
-
-  
-na_data <- na_data %>% select(-waterway, -aerialway, -barrier, -man_made, -z_order) %>% rowid_to_column('grouping_id') %>% 
-  mutate(group_split = case_when(grouping_id >= sequence_start[1] & grouping_id <= sequence_end[1] ~ 1,
-  grouping_id >= sequence_start[2] & grouping_id <= sequence_end[2] ~ 2,
-  grouping_id >= sequence_start[3] & grouping_id <= sequence_end[3] ~ 3,
-  grouping_id >= sequence_start[4] & grouping_id <= sequence_end[4] ~ 4,
-  grouping_id >= sequence_start[5] & grouping_id <= sequence_end[5] ~ 5,
-  grouping_id >= sequence_start[6] & grouping_id <= sequence_end[6] ~ 6,
-  grouping_id >= sequence_start[7] & grouping_id <= sequence_end[7] ~ 7,
-  grouping_id >= sequence_start[8] & grouping_id <= sequence_end[8] ~ 8,
-  grouping_id >= sequence_start[9] & grouping_id <= sequence_end[9] ~ 9,
-  grouping_id >= sequence_start[10] & grouping_id <= sequence_end[10] ~ 10,
-  grouping_id >= sequence_start[11] & grouping_id <= sequence_end[11] ~ 11,
-  grouping_id >= sequence_start[12] & grouping_id <= sequence_end[12] ~ 12,
-  grouping_id >= sequence_start[13] & grouping_id <= sequence_end[13] ~ 13,
-  grouping_id >= sequence_start[14] & grouping_id <= sequence_end[14] ~ 14,
-  grouping_id >= sequence_start[15] & grouping_id <= sequence_end[15] ~ 15,
-  grouping_id >= sequence_start[16] & grouping_id <= sequence_end[16] ~ 16,
-  grouping_id >= sequence_start[17] & grouping_id <= sequence_end[17] ~ 17,
-  grouping_id >= sequence_start[18] & grouping_id <= sequence_end[18] ~ 18,
-  grouping_id >= sequence_start[19] & grouping_id <= sequence_end[19] ~ 19,
-  grouping_id >= sequence_start[20] & grouping_id <= sequence_end[20] ~ 20,
-  grouping_id >= sequence_start[21] & grouping_id <= sequence_end[21] ~ 21,
-  grouping_id >= sequence_start[22] & grouping_id <= sequence_end[22] ~ 22,
-  grouping_id >= sequence_start[23] & grouping_id <= sequence_end[23] ~ 23,
-  grouping_id >= sequence_start[24] & grouping_id <= sequence_end[24] ~ 24,
-  grouping_id >= sequence_start[25] & grouping_id <= sequence_end[25] ~ 25,
-  grouping_id >= sequence_start[26] & grouping_id <= sequence_end[26] ~ 26,
-  grouping_id >= sequence_start[27] & grouping_id <= sequence_end[27] ~ 27,
-  grouping_id >= sequence_start[28] & grouping_id <= sequence_end[28] ~ 28,
-  grouping_id >= sequence_start[29] & grouping_id <= sequence_end[29] ~ 29,
-  grouping_id >= sequence_start[30] & grouping_id <= sequence_end[30] ~ 30,
-  grouping_id >= sequence_start[31] & grouping_id <= sequence_end[31] ~ 31,
-  grouping_id >= sequence_start[32] & grouping_id <= sequence_end[32] ~ 32,
-  grouping_id >= sequence_start[33] & grouping_id <= sequence_end[33] ~ 33,
-  grouping_id >= sequence_start[34] & grouping_id <= sequence_end[34] ~ 34,
-  grouping_id >= sequence_start[35] & grouping_id <= sequence_end[35] ~ 35,
-  grouping_id >= sequence_start[36] & grouping_id <= sequence_end[36] ~ 36,
-  grouping_id >= sequence_start[37] & grouping_id <= sequence_end[37] ~ 37,
-  grouping_id >= sequence_start[38] & grouping_id <= sequence_end[38] ~ 38,
-  grouping_id >= sequence_start[39] & grouping_id <= sequence_end[39] ~ 39,
-  grouping_id >= sequence_start[40] & grouping_id <= sequence_end[40] ~ 40,
-  grouping_id >= sequence_start[41] & grouping_id <= sequence_end[41] ~ 41,
-  grouping_id >= sequence_start[42] & grouping_id <= sequence_end[42] ~ 42,
-  grouping_id >= sequence_start[43] & grouping_id <= sequence_end[43] ~ 43,
-  grouping_id >= sequence_start[44] & grouping_id <= sequence_end[44] ~ 44,
-  grouping_id >= sequence_start[45] & grouping_id <= sequence_end[45] ~ 45,
-  grouping_id >= sequence_start[46] & grouping_id <= sequence_end[46] ~ 46,
-  grouping_id >= sequence_start[47] & grouping_id <= sequence_end[47] ~ 47,
-  grouping_id >= sequence_start[48] & grouping_id <= sequence_end[48] ~ 48,
-  grouping_id >= sequence_start[49] & grouping_id <= sequence_end[49] ~ 49,
-  grouping_id >= sequence_start[50] & grouping_id <= sequence_end[50] ~ 50,
-  grouping_id >= sequence_start[51] & grouping_id <= sequence_end[51] ~ 51,
-  grouping_id >= sequence_start[52] & grouping_id <= sequence_end[52] ~ 52,
-  grouping_id >= sequence_start[53] & grouping_id <= sequence_end[53] ~ 53,
-  grouping_id >= sequence_start[54] & grouping_id <= sequence_end[54] ~ 54,
-  grouping_id >= sequence_start[55] & grouping_id <= sequence_end[55] ~ 55,
-  grouping_id >= sequence_start[56] & grouping_id <= sequence_end[56] ~ 56,
-  grouping_id >= sequence_start[57] & grouping_id <= sequence_end[57] ~ 57,
-  grouping_id >= sequence_start[58] & grouping_id <= sequence_end[58] ~ 58,
-  grouping_id >= sequence_start[59] & grouping_id <= sequence_end[59] ~ 59,
-  grouping_id >= sequence_start[60] & grouping_id <= sequence_end[60] ~ 60,
-  grouping_id >= sequence_start[61] & grouping_id <= sequence_end[61] ~ 61,
-  grouping_id >= sequence_start[62] & grouping_id <= sequence_end[62] ~ 62,
-  grouping_id >= sequence_start[63] & grouping_id <= sequence_end[63] ~ 63,
-  grouping_id >= sequence_start[64] & grouping_id <= sequence_end[64] ~ 64,
-  grouping_id >= sequence_start[65] & grouping_id <= sequence_end[65] ~ 65,
-  grouping_id >= sequence_start[66] & grouping_id <= sequence_end[66] ~ 66,
-  grouping_id >= sequence_start[67] & grouping_id <= sequence_end[67] ~ 67,
-  grouping_id >= sequence_start[68] & grouping_id <= sequence_end[68] ~ 68,
-  grouping_id >= sequence_start[69] & grouping_id <= sequence_end[69] ~ 69,
-  grouping_id >= sequence_start[70] & grouping_id <= sequence_end[70] ~ 70,
-  grouping_id >= sequence_start[71] & grouping_id <= sequence_end[71] ~ 71,
-  grouping_id >= sequence_start[72] & grouping_id <= sequence_end[72] ~ 72,
-  grouping_id >= sequence_start[73] & grouping_id <= sequence_end[73] ~ 73,
-  grouping_id >= sequence_start[74] & grouping_id <= sequence_end[74] ~ 74,
-  grouping_id >= sequence_start[75] & grouping_id <= sequence_end[75] ~ 75,
-  grouping_id >= sequence_start[76] & grouping_id <= sequence_end[76] ~ 76,
-  grouping_id >= sequence_start[77] & grouping_id <= sequence_end[77] ~ 77,
-  grouping_id >= sequence_start[78] & grouping_id <= sequence_end[78] ~ 78,
-  grouping_id >= sequence_start[79] & grouping_id <= sequence_end[79] ~ 79,
-  grouping_id >= sequence_start[80] & grouping_id <= sequence_end[80] ~ 80
-  )) %>% 
-  select(-grouping_id)
-
-for (i in 1:80)  {
- selection <- na_data %>% filter(group_split == i) %>% st_transform(crs = 'ESRI:102008')
- osm_segmented <- qgis_run_algorithm(
-  "native:splitlinesbylength",
-  INPUT = selection,
-  LENGTH = 500,
-  OUTPUT = paste0('scratch/osm_lines_500m_intervals_', as.character(i), '.gpkg')
-  )
-  print(paste('Written:', i))
-}
-
-
-osm_lines_list = list.files('scratch/',
-                      pattern = 'osm_lines_500m_intervals_*',
-                      full.names = TRUE,
-                      recursive = TRUE)
-
-for (i in 1:length(osm_lines_list)) {
-  osm_points <- qgis_run_algorithm(
-  "native:centroids",
-  INPUT = osm_lines_list[i],
-  OUTPUT = paste0('scratch/osm_points_500m_intervals_', as.character(i), '.gpkg')
-)
-  print(paste('Written:', i))
-}
 
 osm_data_list = list.files('scratch/', 
                       pattern = 'osm_points_500m_intervals_*',
