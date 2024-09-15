@@ -247,19 +247,11 @@ osm_table <- tibble(grouping_id = numeric(),
                     other_tags = character(),
                     group_number = numeric(),
                     lon = numeric(),
-                    lat = numeric())
- 
-osm_processor <- function(linestring) {
-  osm_linestring <- read_sf(linestring)
-  group_indices <- unique(osm_linestring$group_number)
-  osm_list = vector('list', length = length(group_indices))
-  counter = 1
 
-    for (i in group_indices) {
-      suppressWarnings({
-        osm_segmented <-  qgis_run_algorithm("native:splitlinesbylength",
-                     INPUT = filter(osm_linestring, 
-                                    group_number == i),
+qgis_wrapper <- function(group_iterator, osm_slice) {
+        osm_segmented <- qgis_run_algorithm("native:splitlinesbylength",
+                     INPUT = filter(osm_slice, 
+                                    group_number == group_iterator),
                      LENGTH = 1000) %>% st_as_sf()
         osm_points <- qgis_run_algorithm("native:pointsalonglines",
                                  INPUT = osm_segmented,
@@ -270,28 +262,43 @@ osm_processor <- function(linestring) {
         st_drop_geometry() %>% 
         select(group_number, osm_id, name, highway, 
                other_tags, lon, lat)
-        osm_list[[counter]] <- osm_points
-        print(paste('Completed:', counter))
-        counter = counter + 1
+        return(osm_points)
         qgis_clean_tmp()
         gc()
-      })
-  }
-  osm_dataframe <- bind_rows(osm_list)
-  print(paste('Completed slice!'))
-  return(osm_dataframe)
 }
 
+osm_processor <- function(group_slice) {
+  interior_osm <- read_sf(group_slice)
+  group_length <- length(unique(interior_osm$group_number))
+  group_vector <- 1:group_length
+  p <- progressr::progressor(steps = group_length)
+  result <- future_map(group_vector, ~{
+    p()
+    qgis_wrapper(.x, osm_slice = interior_osm)})
+  return(result)
+}
 
 plan(multisession, workers = 6)
 
-slice_one <- osm_slice_list[1:167]
-slice_two <- osm_slice_list[168:334]
-slice_three <- osm_slice_list[334:500]
+for (i in 1:167) {
+  iterate_slice <- osm_slice_list[i]
+  with_progress({osm_processed <- osm_processor(osm_slice_list[1])})
+  write_csv(paste0('osm_point_table_processed', i ,'.csv'))
+}
 
-osm_large_list <- future_map(osm_processor(osm_slice_list), .progress = TRUE)
+for (i in 168:334) {
+  iterate_slice <- osm_slice_list[i]
+  with_progress({osm_processed <- osm_processor(osm_slice_list[1])})
+  write_csv(paste0('osm_point_table_processed', i ,'.csv'))
+}
 
-###
+for (i in 168:334) {
+  iterate_slice <- osm_slice_list[i]
+  with_progress({osm_processed <- osm_processor(osm_slice_list[1])})         write_csv(paste0('osm_point_table_processed', i ,'.csv'))
+}
+
+
+
 
 osm_data_list = list.files('scratch/', 
                       pattern = 'osm_points_500m_intervals_*',
