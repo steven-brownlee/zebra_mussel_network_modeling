@@ -54,6 +54,7 @@ library(future)
 library(doFuture)
 library(purrr)
 library(furrr)
+library(progressr)
 
 ```
 
@@ -236,6 +237,7 @@ for (i in 1:500)  {
 }
 
 ```
+
 ```{r}
 
 osm_slice_list = list.files('/home/steven/Documents/common/thesis/ch2/gis_data/', 
@@ -244,9 +246,9 @@ osm_slice_list = list.files('/home/steven/Documents/common/thesis/ch2/gis_data/'
                       recursive = TRUE)
 
 qgis_wrapper <- function(group_iterator, osm_slice) {
+        osm_slice <- osm_slice %>% filter(group_number == group_iterator)
         osm_segmented <- qgis_run_algorithm("native:splitlinesbylength",
-                     INPUT = filter(osm_slice, 
-                                    group_number == group_iterator),
+                     INPUT = osm_slice,
                      LENGTH = 1000) %>% st_as_sf()
         osm_points <- qgis_run_algorithm("native:pointsalonglines",
                                  INPUT = osm_segmented,
@@ -265,15 +267,17 @@ qgis_wrapper <- function(group_iterator, osm_slice) {
 osm_processor <- function(group_slice) {
   interior_osm <- read_sf(group_slice)
   group_length <- length(unique(interior_osm$group_number))
-  group_vector <- 1:group_length
+  group_vector <- unique(interior_osm$group_number)
   p <- progressr::progressor(steps = group_length)
-  result <- future_map(group_vector, ~{
-    p()
+  result <- future_map(group_vector, globals = c(interior_osm = interior_osm),
+    ~{ p()
     qgis_wrapper(.x, osm_slice = interior_osm)})
   return(result)
 }
 
 plan(multisession, workers = 6)
+
+with_progress({osm_test <- osm_processor(test)})
 
 for (i in 1:167) {
   with_progress({osm_processed <- osm_processor(osm_slice_list[i])})
