@@ -240,14 +240,6 @@ osm_slice_list = list.files('/home/steven/Documents/common/thesis/ch2/gis_data/'
                       full.names = TRUE,
                       recursive = TRUE)
 
-osm_table <- tibble(grouping_id = numeric(),
-                    osm_id = character(),
-                    name = character(),
-                    highway = character(),
-                    other_tags = character(),
-                    group_number = numeric(),
-                    lon = numeric(),
-
 qgis_wrapper <- function(group_iterator, osm_slice) {
         osm_segmented <- qgis_run_algorithm("native:splitlinesbylength",
                      INPUT = filter(osm_slice, 
@@ -281,20 +273,18 @@ osm_processor <- function(group_slice) {
 plan(multisession, workers = 6)
 
 for (i in 1:167) {
-  iterate_slice <- osm_slice_list[i]
-  with_progress({osm_processed <- osm_processor(osm_slice_list[1])})
-  write_csv(paste0('osm_point_table_processed', i ,'.csv'))
+  with_progress({osm_processed <- osm_processor(osm_slice_list[i])})
+  osm_processed <- bind_rows(osm_processed)
+  write_csv(osm_processed, paste0('osm_point_table_processed_', i ,'.csv'))
 }
 
 for (i in 168:334) {
-  iterate_slice <- osm_slice_list[i]
-  with_progress({osm_processed <- osm_processor(osm_slice_list[1])})
-  write_csv(paste0('osm_point_table_processed', i ,'.csv'))
+  with_progress({osm_processed <- osm_processor(osm_slice_list[i])})
+  write_csv(paste0('osm_point_table_processed_', i ,'.csv'))
 }
 
-for (i in 168:334) {
-  iterate_slice <- osm_slice_list[i]
-  with_progress({osm_processed <- osm_processor(osm_slice_list[1])})         write_csv(paste0('osm_point_table_processed', i ,'.csv'))
+for (i in 334:500) {
+  with_progress({osm_processed <- osm_processor(osm_slice_list[i])})         write_csv(paste0('osm_point_table_processed_', i ,'.csv'))
 }
 
 
