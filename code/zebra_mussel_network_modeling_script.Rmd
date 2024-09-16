@@ -235,6 +235,9 @@ for (i in 1:500)  {
   print(paste('Completed:', i))
 }
 
+```
+```{r}
+
 osm_slice_list = list.files('/home/steven/Documents/common/thesis/ch2/gis_data/', 
                       pattern = 'group_slice_*',
                       full.names = TRUE,
@@ -280,11 +283,14 @@ for (i in 1:167) {
 
 for (i in 168:334) {
   with_progress({osm_processed <- osm_processor(osm_slice_list[i])})
+  osm_processed <- bind_rows(osm_processed)
   write_csv(paste0('osm_point_table_processed_', i ,'.csv'))
 }
 
 for (i in 334:500) {
-  with_progress({osm_processed <- osm_processor(osm_slice_list[i])})         write_csv(paste0('osm_point_table_processed_', i ,'.csv'))
+  with_progress({osm_processed <- osm_processor(osm_slice_list[i])})    
+  osm_processed <- bind_rows(osm_processed)
+  write_csv(paste0('osm_point_table_processed_', i ,'.csv'))
 }
 
 
