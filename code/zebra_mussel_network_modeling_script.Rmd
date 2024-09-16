@@ -277,24 +277,25 @@ osm_processor <- function(group_slice) {
 
 plan(multisession, workers = 6)
 
-with_progress({osm_test <- osm_processor(test)})
-
 for (i in 1:167) {
   with_progress({osm_processed <- osm_processor(osm_slice_list[i])})
   osm_processed <- bind_rows(osm_processed)
-  write_csv(osm_processed, paste0('osm_point_table_processed_', i ,'.csv'))
+  print(paste('Completed:', i))
+  write_csv(osm_processed, paste0('scratch/osm_point_table_processed_', i ,'.csv'))
 }
 
 for (i in 168:334) {
   with_progress({osm_processed <- osm_processor(osm_slice_list[i])})
   osm_processed <- bind_rows(osm_processed)
-  write_csv(paste0('osm_point_table_processed_', i ,'.csv'))
+  print(paste('Completed:', i))
+  write_csv(paste0('scratch/osm_point_table_processed_', i ,'.csv'))
 }
 
 for (i in 334:500) {
   with_progress({osm_processed <- osm_processor(osm_slice_list[i])})    
   osm_processed <- bind_rows(osm_processed)
-  write_csv(paste0('osm_point_table_processed_', i ,'.csv'))
+  print(paste('Completed:', i))
+  write_csv(paste0('scratch/osm_point_table_processed_', i ,'.csv'))
 }
 
 
