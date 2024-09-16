@@ -51,7 +51,7 @@ library(rcartocolor)
 library(sfnetworks)
 library(qgisprocess)
 library(future)
-library(doFuture)
+library(future.callr)
 library(purrr)
 library(furrr)
 library(progressr)
@@ -245,57 +245,90 @@ osm_slice_list = list.files('/home/steven/Documents/common/thesis/ch2/gis_data/'
                       full.names = TRUE,
                       recursive = TRUE)
 
-qgis_wrapper <- function(group_iterator, osm_slice) {
-        osm_slice <- osm_slice %>% filter(group_number == group_iterator)
-        osm_segmented <- qgis_run_algorithm("native:splitlinesbylength",
-                     INPUT = osm_slice,
-                     LENGTH = 1000) %>% st_as_sf()
-        osm_points <- qgis_run_algorithm("native:pointsalonglines",
-                                 INPUT = osm_segmented,
-                                 DISTANCE = 1000) %>% 
-          st_as_sf() %>% 
-         mutate(lon = sf::st_coordinates(.)[,1],
-                lat = sf::st_coordinates(.)[,2]) %>% 
-        st_drop_geometry() %>% 
-        select(group_number, osm_id, name, highway, 
-               other_tags, lon, lat)
-        return(osm_points)
-        qgis_clean_tmp()
-        gc()
+linesplit_small <- function(id, osm_file) {
+  osm_filtered <- osm_file %>% filter(osm_id == id) 
+  osm_interior_length <- osm_filtered$length
+  osm_interpolated <- osm_filtered %>% st_as_sfc %>% 
+  st_line_interpolate(dist = seq(0, osm_interior_length, osm_interior_length/2)) %>% st_as_sf() %>% 
+    mutate(osm_id = as.character(id)) %>% mutate(lon = sf::st_coordinates(.)[,1],
+                lat = sf::st_coordinates(.)[,2]) %>% st_drop_geometry()
+  osm_aspatial <- osm_filtered %>% st_drop_geometry()
+  osm_joined <- left_join(osm_interpolated, osm_filtered, by = 'osm_id')
+  return(osm_joined)
 }
 
-osm_processor <- function(group_slice) {
-  interior_osm <- read_sf(group_slice)
-  group_length <- length(unique(interior_osm$group_number))
-  group_vector <- unique(interior_osm$group_number)
-  p <- progressr::progressor(steps = group_length)
-  result <- future_map(group_vector, globals = c(interior_osm = interior_osm),
+linesplit_regular <- function(id, osm_file, maxlength) {
+  osm_filtered <- osm_file %>% filter(osm_id == id) 
+  osm_interior_length <- osm_filtered$length
+  osm_interpolated <- osm_filtered %>% st_as_sfc %>% 
+  st_line_interpolate(dist = seq(0, osm_interior_length, maxlength)) %>% st_as_sf() %>% 
+    mutate(osm_id = as.character(id)) %>% mutate(lon = sf::st_coordinates(.)[,1],
+                lat = sf::st_coordinates(.)[,2]) %>% st_drop_geometry()
+  osm_aspatial <- osm_filtered %>% st_drop_geometry()
+  osm_joined <- left_join(osm_interpolated, osm_filtered, by = 'osm_id')
+  return(osm_joined)
+}
+
+  
+outer_process <- function(osm_slice) {
+  
+  osm_interior <- read_sf(osm_slice)
+  #
+  osm_interior <- osm_interior %>% mutate(length = as.numeric(st_length(geom)))
+  osm_less_1km <- osm_interior %>% filter(length < 1000)
+  osm_greater_1km <- osm_interior %>% filter(length > 1000)
+  #
+  less_1km_ids <- unique(osm_less_1km$osm_id)
+  greater_1km_ids <- unique(osm_greater_1km$osm_id)
+  #
+  p  <- progressr::progressor(along = less_1km_ids)
+  less_1km_result <- future_map(less_1km_ids, 
+                                globals = c(osm_interior = osm_interior),
     ~{ p()
-    qgis_wrapper(.x, osm_slice = interior_osm)})
-  return(result)
+    linesplit_small(.x, osm_file = osm_interior)})
+  p  <- progressr::progressor(along = greater_1km_ids)
+  greater_1km_result <- future_map(greater_1km_ids, 
+                                globals = c(osm_interior = osm_interior),
+    ~{ p()
+    linesplit_regular(.x, osm_file = osm_interior, maxlength = 500)})
+  less_1km_result <- bind_rows(less_1km_result)
+  greater_1km_result <- bind_rows(greater_1km_result)
+  final_results <- bind_rows(less_1km_result, greater_1km_result)
+  return(final_results)
 }
+  
 
-plan(multisession, workers = 6)
+osm_list_table <- tibble(osm_slice_list)
+
+osm_slice_one <- osm_list_table %>% slice(1:167) %>% deframe()
+
+osm_slice_one <- osm_list_table %>% slice(1:6) %>% deframe()
+
+osm_slice_two <- osm_list_table %>% slice(168:334) %>% deframe()
+
+osm_slice_three <- osm_list_table %>% slice(334:500) %>% deframe()
+
+plan(callr, workers = 6)
 
 for (i in 1:167) {
-  with_progress({osm_processed <- osm_processor(osm_slice_list[i])})
+  with_progress({osm_processed <- outer_process(osm_slice_list[i])})
   osm_processed <- bind_rows(osm_processed)
   print(paste('Completed:', i))
-  write_csv(osm_processed, paste0('scratch/osm_point_table_processed_', i ,'.csv'))
+  write_csv(osm_processed, paste0('scratch/point_outdir/osm_point_table_processed_', i ,'.csv'))
 }
 
 for (i in 168:334) {
-  with_progress({osm_processed <- osm_processor(osm_slice_list[i])})
+  with_progress({osm_processed <- outer_process(osm_slice_list[i])})
   osm_processed <- bind_rows(osm_processed)
   print(paste('Completed:', i))
-  write_csv(osm_processed, paste0('scratch/osm_point_table_processed_', i ,'.csv'))
+  write_csv(osm_processed, paste0('scratch/point_outdir/osm_point_table_processed_', i ,'.csv'))
 }
 
 for (i in 334:500) {
-  with_progress({osm_processed <- osm_processor(osm_slice_list[i])})    
+  with_progress({osm_processed <- outer_process(osm_slice_list[i])})    
   osm_processed <- bind_rows(osm_processed)
   print(paste('Completed:', i))
-  write_csv(osm_processed, paste0('scratch/osm_point_table_processed_', i ,'.csv'))
+  write_csv(osm_processed, paste0('scratch/point_outdir/osm_point_table_processed_', i ,'.csv'))
 }
 
 
