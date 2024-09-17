@@ -296,19 +296,11 @@ outer_process <- function(osm_slice) {
   final_results <- bind_rows(less_1km_result, greater_1km_result)
   return(final_results)
 }
-  
 
-osm_list_table <- tibble(osm_slice_list)
-
-osm_slice_one <- osm_list_table %>% slice(1:167) %>% deframe()
-
-osm_slice_one <- osm_list_table %>% slice(1:6) %>% deframe()
-
-osm_slice_two <- osm_list_table %>% slice(168:334) %>% deframe()
-
-osm_slice_three <- osm_list_table %>% slice(334:500) %>% deframe()
 
 plan(callr, workers = 6)
+options(future.globals.maxSize= 2e+9)
+
 
 for (i in 1:167) {
   with_progress({osm_processed <- outer_process(osm_slice_list[i])})
@@ -331,7 +323,56 @@ for (i in 334:500) {
   write_csv(osm_processed, paste0('scratch/point_outdir/osm_point_table_processed_', i ,'.csv'))
 }
 
+# 447 missing
 
+for (i in 449:500) {
+  with_progress({osm_processed <- outer_process(osm_slice_list[i])})    
+  osm_processed <- bind_rows(osm_processed)
+  print(paste('Completed:', i))
+  write_csv(osm_processed, paste0('scratch/point_outdir/osm_point_table_processed_', i ,'.csv'))
+}
+
+
+test <- read_sf(osm_slice_list[447]) %>% rowid_to_column('uid')
+
+##
+
+divided_dataset <- tibble(x = seq(1:4254041))
+
+num_groups = 100
+
+divided_dataset <- divided_dataset %>% mutate(grouping = (row_number()-1) %/% (n()/num_groups)) %>% 
+   group_by(grouping) %>% 
+  summarize(min_x = min(x), max_x = max(x)) %>% select(-grouping)
+
+
+sequence_start = pull(divided_dataset, min_x)
+
+sequence_end = pull(divided_dataset, max_x)
+
+for (i in 1:100)  {
+  na_slice <- test %>% 
+    filter(uid >= sequence_start[i] & uid <= sequence_end[i])
+  write_sf(na_slice, paste0('scratch/osm_point_table_processed_447_', i, '.gpkg'))
+  print(paste('Completed:', i))
+}
+
+
+osm_447_list = list.files('/home/steven/Documents/common/thesis/ch2/gis_data/', 
+                      pattern = 'osm_point_table_processed_447_*',
+                      full.names = TRUE,
+                      recursive = TRUE)
+for (i in 1:100) {
+  with_progress({osm_processed <- outer_process(osm_447_list[i])})    
+  osm_processed <- bind_rows(osm_processed)
+  print(paste('Completed:', i))
+  write_csv(osm_processed, paste0('scratch/point_outdir/osm_point_table_processed_447_', i ,'.csv'))
+}
+
+
+###
+
+with_progress({osm_processed <- outer_process(osm_slice_list[447])})  
 
 
 osm_data_list = list.files('scratch/', 
