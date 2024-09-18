@@ -206,9 +206,9 @@ na_data <- read_sf('data_directory/na_highway_filtered_final.gpkg') %>%
 
 ###
 
-divided_dataset <- tibble(x = seq(1:2487683))
+divided_dataset <- tibble(x = seq(1:18135029))
 
-num_groups = 500
+num_groups = 2000
 
 divided_dataset <- divided_dataset %>% mutate(grouping = (row_number()-1) %/% (n()/num_groups)) %>% 
    group_by(grouping) %>% 
@@ -219,11 +219,11 @@ sequence_start = pull(divided_dataset, min_x)
 
 sequence_end = pull(divided_dataset, max_x)
 
-for (i in 1:500)  {
+for (i in 1:2000)  {
   group_slice <- na_data %>% 
-    filter(rowid >= sequence_start[i] & rowid <= sequence_end[i]) %>% 
+    filter(rowid >= sequence_start[i] & rowid < sequence_end[i]) %>% 
     st_transform(crs = 'ESRI:102008')
-  write_sf(group_slice, paste0('scratch/group_slice_', i, '.gpkg'))
+  write_sf(group_slice, paste0('scratch/group_slice/group_slice_', i, '.gpkg'))
   print(paste('Completed:', i))
 }
 
@@ -231,7 +231,7 @@ for (i in 1:500)  {
 
 ```{r}
 
-osm_slice_list = list.files('/home/steven/Documents/common/thesis/ch2/gis_data/', 
+osm_slice_list = list.files('/home/steven/Documents/common/thesis/ch2/gis_data/scratch/group_slice/', 
                       pattern = 'group_slice_*',
                       full.names = TRUE,
                       recursive = TRUE)
@@ -290,7 +290,6 @@ outer_process <- function(osm_slice) {
 
 
 plan(callr, workers = 6)
-options(future.globals.maxSize= 2e+9)
 
 
 for (i in 1:167) {
@@ -314,57 +313,6 @@ for (i in 334:500) {
   write_csv(osm_processed, paste0('scratch/point_outdir/osm_point_table_processed_', i ,'.csv'))
 }
 
-# 447 missing
-
-for (i in 449:500) {
-  with_progress({osm_processed <- outer_process(osm_slice_list[i])})    
-  osm_processed <- bind_rows(osm_processed)
-  print(paste('Completed:', i))
-  write_csv(osm_processed, paste0('scratch/point_outdir/osm_point_table_processed_', i ,'.csv'))
-}
-
-
-test <- read_sf(osm_slice_list[447]) %>% rowid_to_column('uid')
-
-##
-
-divided_dataset <- tibble(x = seq(1:4254041))
-
-num_groups = 100
-
-divided_dataset <- divided_dataset %>% mutate(grouping = (row_number()-1) %/% (n()/num_groups)) %>% 
-   group_by(grouping) %>% 
-  summarize(min_x = min(x), max_x = max(x)) %>% select(-grouping)
-
-
-sequence_start = pull(divided_dataset, min_x)
-
-sequence_end = pull(divided_dataset, max_x)
-
-na_slice <- read_sf('scratch/group_slice_447.gpkg')
-
-for (i in 1:100)  {
-  na_slice <- test %>% 
-    filter(uid >= sequence_start[i] & uid <= sequence_end[i])
-  write_sf(na_slice, paste0('scratch/osm_point_table_processed_447_', i, '.gpkg'))
-  print(paste('Completed:', i))
-}
-
-
-osm_447_list = list.files('/home/steven/Documents/common/thesis/ch2/gis_data/', 
-                      pattern = 'osm_point_table_processed_447_*',
-                      full.names = TRUE,
-                      recursive = TRUE)
-for (i in 50:100) {
-  with_progress({osm_processed <- outer_process(osm_447_list[i])})    
-  osm_processed <- bind_rows(osm_processed)
-  print(paste('Completed:', i))
-  write_csv(osm_processed, paste0('scratch/point_outdir/osm_point_table_processed_447_', i ,'.csv'))
-}
-
-
-###
-
 hexagon_dissolved <- read_sf('data_directory/2km_hexagon_dissolved.gpkg')
 
 osm_data_list = list.files('scratch/point_outdir/', 
@@ -384,7 +332,7 @@ for (i in 1:length(osm_data_list))  {
    mutate(lon = sf::st_coordinates(.)[,1],
           lat = sf::st_coordinates(.)[,2]) %>% 
     st_drop_geometry()
- write_csv(osm_point_intermediate, paste0('scratch/osm_points_organized_', i, '.csv'))
+ write_csv(osm_point_intermediate, paste0('scratch/point_outdir/osm_points_organized_', i, '.csv'))
  print(paste('Written:', i))
 }
 
@@ -394,7 +342,7 @@ for (i in 1:length(osm_data_list))  {
 
 ```{r}
 
-osm_data_list = list.files('scratch/', 
+osm_data_list = list.files('scratch/point_outdir/', 
                       pattern = 'osm_points_organized_*',
                       full.names = TRUE,
                       recursive = TRUE)
@@ -402,10 +350,11 @@ osm_data_list = list.files('scratch/',
 
 osm_filter <- function(input_table) {
   input_table <- read_csv(input_table, show_col_types = FALSE)
-  combined_osm_table <- input_table %>% filter(!group_id %in% c(NA)) %>% 
+  combined_osm_table <- input_table %>% 
     rowid_to_column('point_id')
+  combined_osm_table$name <- sub('^$', 'no_name', combined_osm_table$name)
 
-  osm_table_ids <- combined_osm_table %>% select(point_id, osm_id, group_id, lon, name, lat)
+  osm_table_ids <- combined_osm_table %>% select(point_id, osm_id, group_id, name, lon, lat)
 
   osm_table_lanes <- combined_osm_table %>% filter(grepl('lanes', other_tags)) %>% 
       separate_longer_delim(other_tags, delim = ',') %>%  
@@ -416,6 +365,7 @@ osm_filter <- function(input_table) {
       rename(lanes = other_tags) %>% select(point_id, osm_id, name, lanes) %>% 
       st_drop_geometry()
 
+  
   osm_table_lanes <- osm_table_lanes
 
   osm_table_lanes$lanes <- sub("\\;.*", "", osm_table_lanes$lanes)
@@ -484,39 +434,38 @@ osm_filter <- function(input_table) {
   ###
 
   osm_table_type <- combined_osm_table %>% select(point_id, osm_id, highway) %>% rename(type = highway)
-
+  
   osm_table_type$type <- factor(osm_table_type$type, 
                                   levels = c('residential', 'unclassified', 
                                                'tertiary', 'secondary', 
                                                'primary', 'trunk', 'motorway'))
 
   osm_filtered_data <- left_join(osm_table_ids, osm_table_type, 
-                               by = 'point_id') %>% drop_na()
+                               by = 'point_id',
+                               relationship = 'one-to-one',
+                               keep = FALSE)
 
   osm_filtered_data <- left_join(osm_filtered_data, osm_table_lanes, 
-                               by = 'point_id')
+                               by = 'point_id',
+                               relationship = 'one-to-one')
 
   osm_filtered_data <- left_join(osm_filtered_data, osm_table_maxspeed_combined, 
-                               by = 'point_id')
+                               by = 'point_id',
+                               relationship = 'one-to-one')
 
-  osm_filtered_data <- osm_filtered_data %>% drop_na()
 
   osm_filtered_data <- st_as_sf(osm_filtered_data, coords = c('lon', 'lat'), 
                               crs = st_crs(4326))
 
-  osm_filtered_data <- osm_filtered_data %>% select(point_id, osm_id.x, 
-                                                    group_id.x, name, lanes, 
-                                                    max_speed) %>% 
-    rename()
 
   
   return(osm_filtered_data)
 }
 
 
-for (i in 1:545) {
+for (i in 1:500) {
   ({osm_processed <- osm_filter(osm_data_list[i])})
-  write_sf(osm_processed, paste0('scratch/osm_filtered_data_', i, '.gpkg'))
+  write_sf(osm_processed, paste0('scratch/filtered_outdir/osm_filtered_data_', i, '.gpkg'))
   print(paste('Completed:', i))
 }
 
@@ -535,13 +484,13 @@ write_sf(osm_combined, 'data_directory/osm_points_combined.gpkg')
 hexagon_north_america <- read_sf('data_directory/2km_hexagon_selection_grouped.gpkg')
 
 for (i in 1:40) {
-  osm_hexagon_aligned <- osm_combined %>% filter(group_id = i)
+  osm_hexagon_aligned <- osm_combined %>% filter(group_id == i)
   write_sf(osm_hexagon_aligned, paste('data_directory/final_osm/osm_hexagon_aligned_', i, '.gpkg'))
   print(paste('Completed:', i))
 }
 
 for (i in 1:40) {
-  hexagon_subset <- hexagon_north_america %>% filter(group_id = i)
+  hexagon_subset <- hexagon_north_america %>% filter(group_id == i)
   write_sf(hexagon_subset, paste('data_directory/final_hexagon/osm_hexagon_aligned_', i, '.gpkg'))
   print(paste('Completed:', i))
 }
@@ -553,9 +502,9 @@ for (i in 1:40) {
 
 
 
-inner_summarizer <- function(id) {
-  osm_selected <- read_sf(paste('data_directory/final_osm/osm_hexagon_aligned_', i, '.gpkg'))
-  hexagon_selected <- read_sf(paste('data_directory/final_hexagon/osm_hexagon_aligned_', i, '.gpkg'))
+summarizer <- function(id) {
+  osm_selected <- read_sf(paste('data_directory/final_osm/osm_hexagon_aligned_', id, '.gpkg'))
+  hexagon_selected <- read_sf(paste('data_directory/final_hexagon/osm_hexagon_aligned_', id, '.gpkg'))
   joined_points <- st_join(hexagon_selected, osm_selected,
                                left = TRUE,
                                join = st_intersects) %>% 
@@ -564,6 +513,12 @@ inner_summarizer <- function(id) {
         summarize_at(c('max_speed', 'type', 'lanes'),
                      max, na.rm = TRUE)
   return(hexagon_sum)
+}
+
+
+for (i in 1:40) {
+  osm_hexagon_selection <- summarizer(i)
+  write_sf(osm_hexagon_selection, paste0('data_directory/osm_hexagon_selection_', i, '.gpkg')
 }
 
 
