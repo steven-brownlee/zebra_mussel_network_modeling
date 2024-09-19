@@ -475,6 +475,13 @@ osm_data_list = list.files('scratch/',
                       full.names = TRUE,
                       recursive = TRUE)
 
+osm_part_one <- osm_data_list[1:710]
+
+osm_part_two <- osm_data_list[711:1420]
+
+osm_part_three <- osm_data_list[1420:2000]
+
+
 
 
 big_reader <- function(gpkg_list) {
@@ -486,7 +493,11 @@ big_reader <- function(gpkg_list) {
   return(osm_sf_list)
 }
 
-with_progress({osm_combined <- big_reader(osm_data_list)})
+with_progress({osm_combined_one <- big_reader(osm_part_one)})
+
+with_progress({osm_combined_two <- big_reader(osm_part_two)})
+
+with_progress({osm_combined_three <- big_reader(osm_part_three)})
 
 
 combiner <- function(sf_list) {
@@ -497,13 +508,6 @@ combiner <- function(sf_list) {
     bind_rows(.x)})
   return(osm_combined)
 }
-
-
-osm_part_one <- osm_combined[1:710]
-
-osm_part_two <- osm_combined[711:1420]
-
-osm_part_three <- osm_combined[1420:2000]
 
 
 plan(callr, workers = 6)
