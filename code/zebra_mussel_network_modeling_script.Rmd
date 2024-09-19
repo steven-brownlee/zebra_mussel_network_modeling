@@ -292,21 +292,22 @@ outer_process <- function(osm_slice) {
 plan(callr, workers = 6)
 
 
-for (i in 1:167) {
+for (i in 1:710) {
   with_progress({osm_processed <- outer_process(osm_slice_list[i])})
   osm_processed <- bind_rows(osm_processed)
   print(paste('Completed:', i))
   write_csv(osm_processed, paste0('scratch/point_outdir/osm_point_table_processed_', i ,'.csv'))
 }
 
-for (i in 168:334) {
+for (i in 711:1420) {
   with_progress({osm_processed <- outer_process(osm_slice_list[i])})
   osm_processed <- bind_rows(osm_processed)
   print(paste('Completed:', i))
   write_csv(osm_processed, paste0('scratch/point_outdir/osm_point_table_processed_', i ,'.csv'))
+  gc()
 }
 
-for (i in 334:500) {
+for (i in 1420:2000) {
   with_progress({osm_processed <- outer_process(osm_slice_list[i])})    
   osm_processed <- bind_rows(osm_processed)
   print(paste('Completed:', i))
@@ -463,7 +464,7 @@ osm_filter <- function(input_table) {
 }
 
 
-for (i in 1:500) {
+for (i in 1:2000) {
   ({osm_processed <- osm_filter(osm_data_list[i])})
   write_sf(osm_processed, paste0('scratch/filtered_outdir/osm_filtered_data_', i, '.gpkg'))
   print(paste('Completed:', i))
@@ -475,11 +476,50 @@ osm_data_list = list.files('scratch/',
                       recursive = TRUE)
 
 
-osm_combined <- osm_data_list %>% map(read_sf)
 
-osm_combined <- do.call('rbind', osm_combined)
+big_reader <- function(gpkg_list) {
+  p  <- progressr::progressor(along = gpkg_list)
+  osm_sf_list <- future_map(gpkg_list, 
+                                globals = c(gpkg_list = gpkg_list),
+    ~{ p()
+    read_sf(.x)})
+  return(osm_sf_list)
+}
 
-write_sf(osm_combined, 'data_directory/osm_points_combined.gpkg')
+with_progress({osm_combined <- big_reader(osm_data_list)})
+
+
+combiner <- function(sf_list) {
+  p  <- progressr::progressor(along = sf_list)
+  osm_combined <- future_map(sf_list, 
+                                globals = c(sf_list = sf_list),
+    ~{ p()
+    bind_rows(.x)})
+  return(osm_combined)
+}
+
+
+osm_part_one <- osm_combined[1:710]
+
+osm_part_two <- osm_combined[711:1420]
+
+osm_part_three <- osm_combined[1420:2000]
+
+
+plan(callr, workers = 6)
+
+with_progress({osm_sf_combined_p1 <- combiner(osm_part_one)})
+
+with_progress({osm_sf_combined_p2 <- combiner(osm_part_two)})
+
+with_progress({osm_sf_combined_p3 <- combiner(osm_part_three)})
+
+write_sf(osm_sf_combined_p1, 'data_directory/osm_combined_p1.gpkg')
+
+write_sf(osm_sf_combined_p2, 'data_directory/osm_combined_p2.gpkg')
+
+write_sf(osm_sf_combined_p3, 'data_directory/osm_combined_p3.gpkg')
+
 
 hexagon_north_america <- read_sf('data_directory/2km_hexagon_selection_grouped.gpkg')
 
