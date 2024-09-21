@@ -614,30 +614,70 @@ for (i in 1:200)  {
   print(paste('Completed:', i))
 }
 
+###
+
+tibbler <- function(tibblee) {
+  to_be_tibbled <- read_csv(tibblee) %>%
+    group_by(rowid)
+  here_comes_the_tibbling <- to_be_tibbled %>% 
+    summarize_at(c('max_speed', 'type', 'lanes'),
+                     max, na.rm = TRUE)
+  return(here_comes_the_tibbling)
+}
+
+
+tibble_summarizer <- function(csv_list) {
+  p  <- progressr::progressor(along = csv_list)
+  joined_csvs <- future_map(csv_list,
+    ~{ p()
+    tibbler(.x)})
+}
+
+osm_tibbles = list.files('data_directory/final_osm/final_osm_chunks/', 
+                      pattern = 'osm_row_table_chunk_*',
+                      full.names = TRUE,
+                      recursive = TRUE)
+
 osm_hexagon_append <- tibble(rowid = numeric(),
                                max_speed = numeric(),
                                type = character(),
                                lanes = numeric()
 )
 
-for (i in 1:200)  {
-  hexagon_slice <- read_csv(paste0('data_directory/final_osm/final_osm_chunks/osm_row_table_chunk_', i, '.csv'),
-                             show_col_types = FALSE) %>% 
-    group_by(rowid)
-  hexagon_summarized <- hexagon_slice %>% summarize_at(c('max_speed', 'type', 'lanes'),
-                     max, na.rm = TRUE)
-  osm_hexagon_append <- bind_rows(osm_hexagon_append, hexagon_summarized)
+plan(callr, workers = 6)
+
+for (i in 1:70)  {
+  with_progress({osm_hexagon_tibbled <- tibbler(osm_tibbles[i])})
+  osm_hexagon_append <- bind_rows(osm_hexagon_append, osm_hexagon_tibbled)
   print(paste('Completed:', i))
 }
 
+write_csv(osm_hexagon_append, 'data_directory/final_osm/final_osm_table_1.csv')
 
-osm_hexagon_summarized <- 
-        summarize_at(c('max_speed', 'type', 'lanes'),
-                     max, na.rm = TRUE)
+for (i in 70:135)  {
+  with_progress({osm_hexagon_tibbled <- tibbler(osm_tibbles[i])})
+  osm_hexagon_append <- bind_rows(osm_hexagon_append, osm_hexagon_tibbled)
+  print(paste('Completed:', i))
+}
+
+write_csv(osm_hexagon_append, 'data_directory/final_osm/final_osm_table_2.csv')
+
+for (i in 135:200)  {
+  with_progress({osm_hexagon_tibbled <- tibbler(osm_tibbles[i])})
+  osm_hexagon_append <- bind_rows(osm_hexagon_append, osm_hexagon_tibbled)
+  print(paste('Completed:', i))
+}
+
+write_csv(osm_hexagon_append, 'data_directory/final_osm/final_osm_table_3.csv')
+
 
 hexagon_north_america <- read_sf('data_directory/2km_hexagon_selection_grouped.gpkg')
 
-hexagon_north_america <- left_join()
+hexagon_north_america <- left_join(hexagon_north_america, osm_hexagon_append, by = 'rowid')
+
+hexagon_north_america <- hexagon_north_america(rowid)
+
+hexagon_north_america <- hexagon_north_america %>% filter(rowAny(across(everything(), ~ !is.na(.x))))
 
 ```
 
