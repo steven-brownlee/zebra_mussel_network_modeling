@@ -573,6 +573,7 @@ osm_hexagon_template <- tibble(rowid = numeric(),
                                
 for (i in 1:40) {
   hexagon_selection <- read_sf(paste0('data_directory/final_hexagon/osm_hexagon_aligned_', i, '.gpkg'))
+  osm_pattern <- paste0('group_slice_section_', i, '_*')
   osm_subsection = list.files('data_directory/osm_grouped/', 
                       pattern = osm_pattern,
                       full.names = TRUE,
@@ -591,9 +592,46 @@ for (i in 1:40) {
   print(paste('Completed subsection:', i))
 }
 
-osm_hexagon_summarized <- osm_hexagon_template %>% select(-group_id.y) %>% 
-  rename(group_id = group_id.x) %>% 
-  group_by(rowid) %>% 
+###
+
+divided_dataset <- tibble(x = seq(1:5549984))
+
+num_groups = 200
+
+divided_dataset <- divided_dataset %>% mutate(grouping = (row_number()-1) %/% (n()/num_groups)) %>% 
+   group_by(grouping) %>% 
+  summarize(min_x = min(x), max_x = max(x)) %>% select(-grouping)
+
+sequence_start = pull(divided_dataset, min_x)
+
+sequence_end = pull(divided_dataset, max_x)
+
+
+for (i in 1:200)  {
+  hexagon_slice <- osm_hexagon_template %>%
+    filter(rowid >= sequence_start[i] & rowid < sequence_end[i])
+    write_csv(hexagon_slice, paste0('data_directory/final_osm/final_osm_chunks/osm_row_table_chunk_', i, '.csv'))
+  print(paste('Completed:', i))
+}
+
+osm_hexagon_append <- tibble(rowid = numeric(),
+                               max_speed = numeric(),
+                               type = character(),
+                               lanes = numeric()
+)
+
+for (i in 1:200)  {
+  hexagon_slice <- read_csv(paste0('data_directory/final_osm/final_osm_chunks/osm_row_table_chunk_', i, '.csv'),
+                             show_col_types = FALSE) %>% 
+    group_by(rowid)
+  hexagon_summarized <- hexagon_slice %>% summarize_at(c('max_speed', 'type', 'lanes'),
+                     max, na.rm = TRUE)
+  osm_hexagon_append <- bind_rows(osm_hexagon_append, hexagon_summarized)
+  print(paste('Completed:', i))
+}
+
+
+osm_hexagon_summarized <- 
         summarize_at(c('max_speed', 'type', 'lanes'),
                      max, na.rm = TRUE)
 
