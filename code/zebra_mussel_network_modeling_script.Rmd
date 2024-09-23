@@ -513,6 +513,12 @@ for (i in 1:40) {
 
 ```{r}
 
+###
+
+# Note: use 25 km grid to aggregate streets with same name, fill in gaps
+
+###
+
 osm_data_list = list.files('data_directory/osm_grouped/', 
                       pattern = 'group_slice_section_*',
                       full.names = TRUE,
@@ -534,10 +540,6 @@ inner_summarizer <- function(osm_file, hexagons) {
                      max, na.rm = TRUE)
   return(hexagon_sum)
 }
-
-
-
-
 
 summarizer <- function(osm_list, hexagons) {
   p  <- progressr::progressor(along = osm_list)
@@ -614,6 +616,9 @@ for (i in 1:200)  {
   print(paste('Completed:', i))
 }
 
+
+test <- osm_hexagon_template %>% filter(rowid == 694615)
+
 ###
 
 tibbler <- function(tibblee) {
@@ -671,11 +676,23 @@ for (i in 135:200)  {
 write_csv(osm_hexagon_append, 'data_directory/final_osm/final_osm_table_3.csv')
 
 
+###
+
+osm_tibbles = list.files('data_directory/final_osm/', 
+                      pattern = 'final_osm_table_*',
+                      full.names = TRUE,
+                      recursive = TRUE)
+
+osm_hexagon_tibbled <- lapply(osm_tibbles, read_csv) %>% bind_rows()
+
+
 hexagon_north_america <- read_sf('data_directory/2km_hexagon_selection_grouped.gpkg')
 
-hexagon_north_america <- left_join(hexagon_north_america, osm_hexagon_append, by = 'rowid')
+hexagon_north_america <- left_join(hexagon_north_america, osm_hexagon_tibbled, by = 'rowid')
 
-hexagon_north_america <- hexagon_north_america(rowid)
+hexagon_north_america <- hexagon_north_america group
+
+write_sf(hexagon_north_america, 'data_directory/final_osm_joined_hexagons/final_osm_joined_hexagons.gpkg')
 
 hexagon_north_america <- hexagon_north_america %>% filter(rowAny(across(everything(), ~ !is.na(.x))))
 
