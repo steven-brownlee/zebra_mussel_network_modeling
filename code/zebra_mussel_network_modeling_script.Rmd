@@ -348,6 +348,22 @@ osm_data_list = list.files('scratch/point_outdir/',
                       full.names = TRUE,
                       recursive = TRUE)
 
+osm_local_filter <- function(sub_tibble) {
+  if (all(is.na(sub_tibble$lanes))) {
+    sub_tibble$lanes <- sub_tibble$lanes
+  } else {
+    max_lane_val <- max(sub_tibble$lanes, na.rm = TRUE)
+    sub_tibble$lanes <- replace_na(sub_tibble$lanes, max_lane_val)
+  }
+  if (all(is.na(sub_tibble$max_speed))) {
+    sub_tibble$max_speed <- sub_tibble$max_speed
+  } else {
+    max_max_speed <- max(sub_tibble$max_speed, na.rm = TRUE)
+    sub_tibble$max_speed <- replace_na(sub_tibble$max_speed, max_max_speed)
+  }
+  return(sub_tibble)
+}
+  
 
 osm_filter <- function(input_table) {
   input_table <- read_csv(input_table, show_col_types = FALSE)
@@ -430,8 +446,7 @@ osm_filter <- function(input_table) {
 
   osm_table_maxspeed_combined <- osm_table_maxspeed_combined %>% 
     filter(max_speed < 120)
-
-
+  
   ###
 
   osm_table_type <- combined_osm_table %>% select(point_id, osm_id, highway) %>% rename(type = highway)
@@ -456,14 +471,19 @@ osm_filter <- function(input_table) {
   osm_filtered_data <- osm_filtered_data %>% select(lon, lat, point_id, osm_id.x, group_id, 
                                          name.x, type, lanes, max_speed) %>% 
     rename(osm_id = osm_id.x, name = name.x)
-
+  
+  osm_filtered_data_list <- osm_filtered_data %>% group_split(name)
+  
+  osm_filtered_data_vector <- map(osm_filtered_data_list, osm_local_filter)
+  
+  osm_filtered_data <- bind_rows(osm_filtered_data_vector)
   
   return(osm_filtered_data)
+  
 }
 
-
 for (i in 1:2000) {
-  ({osm_processed <- osm_filter(osm_data_list[i])})
+  osm_processed <- osm_filter(osm_data_list[i])
   write_csv(osm_processed, paste0('scratch/filtered_outdir/osm_filtered_data_', i, '.csv'))
   print(paste('Completed:', i))
 }
@@ -475,10 +495,14 @@ osm_data_list = list.files('scratch/',
 
 osm_combined <- osm_data_list %>% map(read_csv, show_col_types = FALSE) %>% bind_rows()
 
-write_rds(osm_combined, 'scratch/osm_combined.rds')
+#write_rds(osm_combined, 'scratch/osm_combined.rds')
+
 
 #osm_combined <- readRDS('scratch/osm_combined.rds')
 
+
+hexagon_25km <- read_sf('scratch/25km_grid_hexagons.gpkg') %>% 
+  st_transform(crs = 4326) %>% rowid_to_column('large_hexagon_id') %>% select('large_hexagon_id')
 
 hexagon_north_america <- read_sf('data_directory/2km_hexagon_selection_grouped.gpkg')
 
@@ -497,6 +521,7 @@ for (i in 1:40) {
     group_slice <- osm_hexagon_aligned %>% 
       filter(rowid >= sequence_start[x] & rowid < sequence_end[x]) %>% 
       st_as_sf(coords = c('lon', 'lat'), crs = 4326)
+    group_slice <- st_join(group_slice, hexagon_25km, left = TRUE)
     write_sf(group_slice, paste0('data_directory/osm_grouped/group_slice_section_', i,'_part_', x, '.gpkg'))
     print(paste('Completed: section', i, 'slice', x))
     }
@@ -524,10 +549,33 @@ osm_data_list = list.files('data_directory/osm_grouped/',
                       full.names = TRUE,
                       recursive = TRUE)
 
-
 hexagon_north_america <- read_sf('data_directory/2km_hexagon_selection_grouped.gpkg')
 
 
+
+inner_fill <- function(osm_subset) {
+      if (all(!is.na(osm_subset$lanes))) {
+      } else {
+        max_val_lanes <- max(osm_subset$lanes, na.rm = TRUE)
+        osm_subset$lanes <- replace_na(osm_subset$lanes, max_val)
+        }
+    if (all(!is.na(osm_subset$max_speed))) {
+      } else {
+        max_val_speed <- max(osm_subset$max_speed, na.rm = TRUE)
+        osm_subset$max_speed <- replace_na(osm_subset$max_speed, max_val_speed)
+      }
+  }
+
+
+fill <- function(osm_file) {
+  osm_name_list <- read_sf(osm_file)
+  osm_name_list <- osm_name_list %>% group_split(name)
+  p  <- progressr::progressor(along = osm_name_list)
+  hexagons_joined <- future_map(osm_name_list,   
+    ~{ p()
+    inner_fill(.x)})
+}
+                     
 inner_summarizer <- function(osm_file, hexagons) {
   osm_iterate <- read_sf(osm_file) %>%
     select(-rowid, -point_id)
@@ -554,18 +602,6 @@ summarizer <- function(osm_list, hexagons) {
 options(future.globals.maxSize = 1.5e+9)
 
 plan(callr, workers = 6)
-
-for (i in 1:40) {
-  hexagon_selection <- read_sf(paste0('data_directory/final_hexagon/osm_hexagon_aligned_', i, '.gpkg'))
-  osm_pattern <- paste0('group_slice_section_', i, '_*')
-  osm_subsection = list.files('data_directory/osm_grouped/', 
-                      pattern = osm_pattern,
-                      full.names = TRUE,
-                      recursive = TRUE)
-  with_progress({osm_grouped <- summarizer(osm_subsection, hexagons = hexagon_selection)})
-  osm_grouped <- bind_rows(osm_grouped)
-  write_sf(osm_grouped, paste0('data_directory/final_osm_joined_hexagons/joined_hexagon_', i, '.gpkg'))
-}
 
 osm_hexagon_template <- tibble(rowid = numeric(),
                                max_speed = numeric(),
@@ -594,6 +630,24 @@ for (i in 1:40) {
   print(paste('Completed subsection:', i))
 }
 
+#write_rds(osm_hexagon_template, 'scratch/osm_hexagon_template.rds')
+
+osm_hexagon_template <- read_rds('scratch/osm_hexagon_template.rds')
+
+speed_sum <- osm_hexagon_template %>% rename(group_id = group_id.x) %>% 
+  select(-group_id.y) %>% group_by(large_hexagon_id, type) %>% summarize_at(c('max_speed'),
+                     min, na.rm = TRUE)
+
+lane_sum <- osm_hexagon_template %>% rename(group_id = group_id.x) %>% 
+  select(-group_id.y) %>% group_by(large_hexagon_id, type) %>% summarize_at(c('lanes'),
+                     min, na.rm = TRUE)
+
+test <- speed_sum %>% filter(large_hexagon_id == i & type == j) %>% 
+  select(max_speed) %>% pull()
+
+test <- lane_sum %>% filter(large_hexagon_id == i & type == j) %>% 
+  select(max_speed) %>% pull()
+
 ###
 
 divided_dataset <- tibble(x = seq(1:5549984))
@@ -616,8 +670,6 @@ for (i in 1:200)  {
   print(paste('Completed:', i))
 }
 
-
-test <- osm_hexagon_template %>% filter(rowid == 694615)
 
 ###
 
@@ -676,6 +728,8 @@ for (i in 135:200)  {
 write_csv(osm_hexagon_append, 'data_directory/final_osm/final_osm_table_3.csv')
 
 
+ test <- read_csv(osm_tibbles[50])
+
 ###
 
 osm_tibbles = list.files('data_directory/final_osm/', 
@@ -690,7 +744,7 @@ hexagon_north_america <- read_sf('data_directory/2km_hexagon_selection_grouped.g
 
 hexagon_north_america <- left_join(hexagon_north_america, osm_hexagon_tibbled, by = 'rowid')
 
-hexagon_north_america <- hexagon_north_america group
+hexagon_north_america <- hexagon_north_america %>% filter_all(all_vars(!is.infinite(max_speed)))
 
 write_sf(hexagon_north_america, 'data_directory/final_osm_joined_hexagons/final_osm_joined_hexagons.gpkg')
 
