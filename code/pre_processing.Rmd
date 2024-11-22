@@ -39,7 +39,7 @@ loaded via a namespace (and not attached):
 # Set up data directory
 
 ```{r setup, include=FALSE}
-knitr::opts_knit$set(root.dir = '/home/steven/Documents/common/thesis/ch2/gis_data/')
+knitr::opts_knit$set(root.dir = '/home/steven/Documents/workspace/thesis/ch2/gis_data')
 ```
 
 # R library setup
@@ -50,7 +50,6 @@ library(tidyverse)
 library(rcartocolor)
 library(sfnetworks)
 library(qgisprocess)
-library(osmdata)
 
 ```
 
@@ -118,6 +117,21 @@ lakes <- st_intersection(lakes, na_bbox)
 
 write_sf(lakes, 'data_directory/cec_lakes.gpkg')
 
+# Canada metropolitan areas
+
+canada_metro <- read_sf('downloads/canada_census_metropolitan_areas/lcma000a16a_e.shp')
+
+canada_metro <- canada_metro %>% st_transform(crs = 4326) %>% st_make_valid()
+
+write_sf(canada_metro, 'processed/canada_metro_areas.gpkg')
+
+# US metropolitan areas
+
+us_metro <- read_sf('downloads/tiger_metropolitan_statistical_areas/tl_2019_us_cbsa.shp')
+
+us_metro <- us_metro %>% st_transform(crs = 4326) %>% st_make_valid()
+
+write_sf(us_metro, 'processed/us_metro_areas.gpkg')
 
 ```
 
