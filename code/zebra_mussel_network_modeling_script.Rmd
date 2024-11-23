@@ -79,6 +79,9 @@ lakes <- read_sf('processed/cec_lakes.gpkg') %>%
 usdot_road_network <- read_sf('processed/usdot_road_network.gpkg')%>% 
   st_transform(crs = 'ESRI:102008')
 
+qgis_bbox <- read_sf('processed/qgis_bbox.gpkg') %>% 
+  st_transform(crs = 'ESRI:102008')
+
 ```
 
 
@@ -180,8 +183,58 @@ return(usdot_filled)
 
 usdot_nodes <- future_map(1:5000, ~node_generator(.x))
 
+###
 
-write_sf(overlay_grid, 'data_directory/processed/2km_hexagon_grid.gpkg')
+usdot_combined <- read_rds('outputs/node_folder/usdot_combined.rds')
+
+usdot_filtered <- drop_na(usdot_combined)
+
+usdot_sf <- st_as_sf(usdot_filtered, coords = c('x_coord', 'y_coord'), crs = st_crs('ESRI:102008'))
+
+###
+
+overlay_grid <- st_make_grid(qgis_bbox, cellsize = 2000,
+                             what = 'polygons', square = FALSE) %>% st_as_sf() %>% 
+  st_transform(crs = 'ESRI:102008')
+
+#write_sf(overlay_grid, 'processed/2km_hexagon_grid.gpkg')
+
+overlay_grid <- read_sf('processed/2km_hexagon_grid.gpkg')
+
+overlay_grid <- overlay_grid %>% rowid_to_column('hex_id')
+
+overlay_grid$hex_group <- as.numeric(cut_number(overlay_grid$hex_id, 1000))
+
+for (x in 1:1000) {
+  overlay_subset <- overlay_grid %>% filter(hex_group == x)
+  write_sf(overlay_subset, paste0('outputs/overlay_grid_segments/hex_group_', x, '.gpkg'))
+  print(paste('Completed:', x))
+}
+
+###
+
+overlay_subset_list <- list.files('outputs/overlay_grid_segments/', 
+                            pattern = 'hex_group_*',
+                            full.names = TRUE,
+                            recursive = TRUE)
+
+overlay_subset_path = 'outputs/overlay_grid_joined/'
+
+counter = 1
+
+for (x in overlay_subset_list) {
+  hexagon_subset <- read_sf(x)
+  hexagon_subset <- hexagon_subset %>%
+  filter(st_intersects(., usdot_sf, sparse = FALSE)[1,])
+  hexagon_joined <- st_join(hexagon_subset, usdot_sf) 
+  write_sf(hexagon_joined, paste0(overlay_subset_path, 'overlay_joined_', 
+                                  counter, '.gpkg'))
+  print(paste('Completed:', x))
+  counter = counter + 1 
+  }
+  
+
+
 
 
 ```
