@@ -88,7 +88,6 @@ qgis_bbox <- read_sf('processed/qgis_bbox.gpkg') %>%
 # Pre-processing
 
 ```{r}
-
 # Create buffers around ZM occurrences
 
 zm_10 <- st_buffer(zm_occurrences, dist = 10000) %>% st_union() %>% st_as_sf() %>% 
@@ -125,8 +124,13 @@ canada_metro <- canada_metro %>% select(CMANAME) %>% rename(metro_area = CMANAME
 north_america_metro <- rbind(us_metro, canada_metro)
 
 # Create node network for USDOT roads
+```
 
+
+```{r}
 usdot_road_network <- usdot_road_network %>% rownames_to_column('seg_id')
+
+usdot_road_network <- usdot_road_network %>% mutate(length_m = LENGTH*1000)
 
 plan(callr, workers = 6)
 options(future.globals.maxSize= 891289600)
@@ -147,19 +151,30 @@ for (x in sublist) {
                          class = numeric())
   
 segment_filtered <- usdot_road_network %>% filter(seg_id == x)
-segment_length = as.numeric(st_length(segment_filtered))
+#segment_length = as.numeric(st_length(segment_filtered))
+segment_length = segment_filtered$length_m
 
 if (segment_length <= 500) {
-  sample_size = 1
-} else if (500 < segment_length & segment_length <= 2000 ) {
-  sample_size = 5
-} else if (2000 < segment_length & segment_length <= 5000) {
   sample_size = 10
-} else  {sample_size = 20} 
+} else if (500 < segment_length & segment_length <= 2000 ) {
+  sample_size = 150
+} else if (2000 < segment_length & segment_length <= 5000) {
+  sample_size = 500 
+} else if (5000 < segment_length & segment_length <= 10000) {
+  sample_size = 1000 
+} else if (10000 < segment_length & segment_length <= 50000) {
+  sample_size = 5000 
+} else if (10000 < segment_length & segment_length <= 50000) {
+  sample_size = 7000
+} else if (50000 < segment_length & segment_length <= 400000) {
+  sample_size = 10000 
+} else  {sample_size = 4000} 
 
-usdot_nodes <- st_sample(segment_filtered, size = sample_size, type = 'regular') %>% st_cast("POINT") %>% st_as_sf() %>% 
+usdot_nodes <- st_sample(segment_filtered, size = sample_size, type = 'regular') %>% 
+  st_cast("POINT") %>% 
+  st_as_sf() %>% 
   mutate(x_coord = sf::st_coordinates(.)[,1],
-                y_coord = sf::st_coordinates(.)[,2],
+         y_coord = sf::st_coordinates(.)[,2],
          usdot_id = segment_filtered$ID,
          country = segment_filtered$COUNTRY,
          jurisdiction = segment_filtered$JURISNAME,
@@ -181,18 +196,25 @@ usdot_filled <- usdot_template
 return(usdot_filled)
 }
 
-usdot_nodes <- future_map(1:5000, ~node_generator(.x))
+usdot_nodes <- future_map(1:716644, ~node_generator(.x))
 
 ###
 
-usdot_combined <- read_rds('outputs/node_folder/usdot_combined.rds')
+usdot_nodes_2 <- bind_rows(usdot_nodes)
 
-usdot_filtered <- drop_na(usdot_combined)
+write_rds(usdot_nodes_2, 'outputs/node_folder/usdot_combined_2.rds')
 
-usdot_sf <- st_as_sf(usdot_filtered, coords = c('x_coord', 'y_coord'), crs = st_crs('ESRI:102008'))
+usdot_combined <- read_rds('outputs/node_folder/usdot_combined_2.rds') %>% 
+  drop_na() %>% 
+  st_as_sf( coords = c('x_coord', 'y_coord'), crs = st_crs('ESRI:102008'))
+
+write_sf(usdot_combined, 'outputs/node_folder/usdot_sf.gpkg')
 
 ###
+```
 
+
+```{r}
 overlay_grid <- st_make_grid(qgis_bbox, cellsize = 2000,
                              what = 'polygons', square = FALSE) %>% st_as_sf() %>% 
   st_transform(crs = 'ESRI:102008')
@@ -233,9 +255,112 @@ for (x in overlay_subset_list) {
   counter = counter + 1 
   }
   
+overlay_joined_list <- list.files('outputs/overlay_grid_joined/', 
+                            pattern = '*.gpkg',
+                            full.names = TRUE,
+                            recursive = TRUE)
 
 
+###
 
+counter = 1
+
+for (x in overlay_joined_list) {
+  interior_table <- tibble(hex_id = numeric(),
+                             country = numeric(),
+                             jurisdiction = character(),
+                             surface = numeric(),
+                             lanes = numeric(),
+                             speed_limit = numeric())
+  # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  hex_interior <- read_sf(x) %>% drop_na() %>% st_drop_geometry()
+  
+  if  (nrow(na.omit(hex_interior)) > 0) {
+    hex_interior$surface_type <- replace_na(hex_interior$surface_type, 'Unpaved' )
+    hex_interior$surface_type <- case_match(hex_interior$surface_type, 
+                                            'Unpaved' ~ '1', 
+                                            'Paved' ~ '2')
+    hex_interior$surface_type <- as.numeric(hex_interior$surface_type)
+    id_list<- as.vector(unique(hex_interior$hex_id))
+    for (y in id_list) {
+      hex_filtered <- hex_interior %>% filter(hex_id == y)
+      int_country <- hex_filtered %>% count(country, sort = TRUE) %>% 
+        st_drop_geometry() %>% 
+        pluck(1, 1) %>% 
+        as.numeric()
+      #~ 
+      int_jurisdiction <- hex_filtered %>% count(jurisdiction, sort = TRUE) %>% 
+        st_drop_geometry() %>% 
+        pluck(1, 1) %>% 
+        as.character()
+      # ~
+      int_surface <- max(hex_filtered$surface_type)
+      int_lanes <- max(hex_filtered$lanes)
+      int_speed_limit <- max(hex_filtered$speed_limit)
+    
+      scratch_tibble <- tibble(hex_id = numeric(),
+                             country = numeric(),
+                             jurisdiction = character(),
+                             surface = numeric(),
+                             lanes = numeric(),
+                             speed_limit = numeric())
+      # ~
+      scratch_tibble <- scratch_tibble %>% 
+      add_row(hex_id = as.numeric(y),
+             country = int_country,
+             jurisdiction = int_jurisdiction,
+             surface = int_surface,
+             lanes = int_lanes,
+             speed_limit = int_speed_limit)
+      interior_table <- rbind(interior_table, scratch_tibble) 
+      }
+    
+  } else {
+    print('No data: skipping!')
+  }
+ 
+  write_csv(interior_table, paste0('outputs/summarized_hexagons/hexagon_chunk_', counter, '.csv'))
+  print(paste('Completed:', counter))
+  counter = counter + 1
+}
+
+hexagon_filtered <- list.files('outputs/summarized_hexagons/', 
+                            pattern = '*.csv',
+                            full.names = TRUE,
+                            recursive = TRUE) %>% 
+  as.vector()
+
+
+for (x in hexagon_filtered) {
+  hexagon_interior <- read_csv(x)
+  
+  if (nrow(na.omit(hexagon_interior)) > 0) {
+    print('Success!')
+  } else {
+    file.remove(x)
+  }
+}
+
+
+hexagon_filtered <- list.files('outputs/summarized_hexagons/', 
+                            pattern = '*.csv',
+                            full.names = TRUE,
+                            recursive = TRUE)
+
+final_table <- lapply(hexagon_filtered, read_csv) %>% bind_rows()
+
+overlay_subset_list <- list.files('outputs/overlay_grid_segments/', 
+                            pattern = 'hex_group_*',
+                            full.names = TRUE,
+                            recursive = TRUE)
+
+hexagon_grid <- lapply(overlay_subset_list, read_sf) %>% bind_rows()
+
+hexagon_grid_joined <- left_join(hexagon_grid, final_table, by = 'hex_id')
+
+hexagon_grid_joined <- hexagon_grid_joined %>% drop_na()
+
+write_sf(hexagon_grid_joined, 'outputs/network_components/hexagon_grid.gpkg')
 
 ```
 
