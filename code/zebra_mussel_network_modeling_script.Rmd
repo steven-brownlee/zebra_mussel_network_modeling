@@ -161,14 +161,14 @@ if (segment_length <= 500) {
 } else if (2000 < segment_length & segment_length <= 5000) {
   sample_size = 500 
 } else if (5000 < segment_length & segment_length <= 10000) {
+  sample_size = 750 
+} else if (10000 < segment_length & segment_length <= 50000) {
   sample_size = 1000 
 } else if (10000 < segment_length & segment_length <= 50000) {
-  sample_size = 5000 
-} else if (10000 < segment_length & segment_length <= 50000) {
-  sample_size = 7000
+  sample_size = 2000
 } else if (50000 < segment_length & segment_length <= 400000) {
-  sample_size = 10000 
-} else  {sample_size = 4000} 
+  sample_size = 3000 
+} else  {sample_size = 2000} 
 
 usdot_nodes <- st_sample(segment_filtered, size = sample_size, type = 'regular') %>% 
   st_cast("POINT") %>% 
@@ -204,11 +204,61 @@ usdot_nodes_2 <- bind_rows(usdot_nodes)
 
 write_rds(usdot_nodes_2, 'outputs/node_folder/usdot_combined_2.rds')
 
-usdot_combined <- read_rds('outputs/node_folder/usdot_combined_2.rds') %>% 
-  drop_na() %>% 
-  st_as_sf( coords = c('x_coord', 'y_coord'), crs = st_crs('ESRI:102008'))
+usdot_combined <- read_rds('outputs/node_folder/usdot_combined_2.rds') 
 
-write_sf(usdot_combined, 'outputs/node_folder/usdot_sf.gpkg')
+usdot_combined <- usdot_combined %>% rowid_to_column('node_id')
+
+
+inside_list = c(1, 1000000,
+                    5000000,
+                    10000000,
+                    15000000,
+                    20000000,
+                    25000000,
+                    35000000,
+                    40000000,
+                    45000000,
+                    50000000,
+                    55000000,
+                    60000000,
+                    65000000,
+                    70000000,
+                    75000000,
+                    80000000,
+                    85000000,
+                    90000000)
+
+outside_list= c(1000000,
+                    5000000,
+                    10000000,
+                    15000000,
+                    20000000,
+                    25000000,
+                    35000000,
+                    40000000,
+                    45000000,
+                    50000000,
+                    55000000,
+                    60000000,
+                    65000000,
+                    70000000,
+                    75000000,
+                    80000000,
+                    85000000,
+                    90000000,
+                    96584795)
+
+for (i in 1:19) {
+  inside_index <- inside_list[i]
+  outside_index <- outside_list[i]
+  usdot_subset <- usdot_combined %>% 
+    filter(node_id >= inside_index & node_id < outside_index)
+   usdot_subset <- usdot_subset %>% 
+     drop_na() %>% 
+  st_as_sf(coords = c('x_coord', 'y_coord'), crs = st_crs('ESRI:102008'))
+  write_sf(usdot_subset, paste0('outputs/node_folder/node_pieces/node_subset_', i, '.gpkg'))
+  print(paste('Completed:', i))
+}
 
 ###
 ```
@@ -222,6 +272,18 @@ overlay_grid <- st_make_grid(qgis_bbox, cellsize = 2000,
 #write_sf(overlay_grid, 'processed/2km_hexagon_grid.gpkg')
 
 overlay_grid <- read_sf('processed/2km_hexagon_grid.gpkg')
+
+
+node_list <- list.files('outputs/node_folder/node_pieces/', 
+                            pattern = '*.gpkg',
+                            full.names = TRUE,
+                            recursive = TRUE)
+
+for (i in 1:19) {
+ interior_nodes  <- read_sf(node_list[i]) 
+ overlay_grid <- st_join(overlay_grid, interior_nodes)
+ print(paste('Completed:', i))
+}
 
 overlay_grid <- overlay_grid %>% rowid_to_column('hex_id')
 
