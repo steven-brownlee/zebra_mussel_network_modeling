@@ -130,7 +130,7 @@ north_america_metro <- rbind(us_metro, canada_metro)
 ```{r}
 usdot_road_network <- usdot_road_network %>% rownames_to_column('seg_id')
 
-usdot_road_network <- usdot_road_network %>% mutate(length_m = LENGTH*1000)
+#usdot_road_network <- usdot_road_network %>% mutate(length_m = LENGTH*1000)
 
 plan(callr, workers = 6)
 options(future.globals.maxSize= 891289600)
@@ -151,24 +151,21 @@ for (x in sublist) {
                          class = numeric())
   
 segment_filtered <- usdot_road_network %>% filter(seg_id == x)
-#segment_length = as.numeric(st_length(segment_filtered))
-segment_length = segment_filtered$length_m
+length_extract = segment_filtered$LENGTH
 
-if (segment_length <= 500) {
-  sample_size = 10
-} else if (500 < segment_length & segment_length <= 2000 ) {
-  sample_size = 150
-} else if (2000 < segment_length & segment_length <= 5000) {
-  sample_size = 500 
-} else if (5000 < segment_length & segment_length <= 10000) {
-  sample_size = 750 
-} else if (10000 < segment_length & segment_length <= 50000) {
-  sample_size = 1000 
-} else if (10000 < segment_length & segment_length <= 50000) {
-  sample_size = 2000
-} else if (50000 < segment_length & segment_length <= 400000) {
-  sample_size = 3000 
-} else  {sample_size = 2000} 
+if (length_extract <= 1) {
+  sample_size = 5
+} else if (1 < length_extract & length_extract <= 5 ) {
+  sample_size = 20
+} else if (5 < length_extract & length_extract <= 20) {
+  sample_size = 100 
+} else if (20 < length_extract & length_extract <= 50) {
+  sample_size = 400 
+} else if (50 < length_extract & length_extract <= 100) {
+  sample_size = 700
+} else if (100 < length_extract & length_extract <= 400) {
+  sample_size = 2500
+} else {sample_size = 2000} 
 
 usdot_nodes <- st_sample(segment_filtered, size = sample_size, type = 'regular') %>% 
   st_cast("POINT") %>% 
@@ -209,46 +206,34 @@ usdot_combined <- read_rds('outputs/node_folder/usdot_combined_2.rds')
 usdot_combined <- usdot_combined %>% rowid_to_column('node_id')
 
 
-inside_list = c(1, 1000000,
-                    5000000,
-                    10000000,
-                    15000000,
-                    20000000,
-                    25000000,
-                    35000000,
-                    40000000,
-                    45000000,
-                    50000000,
-                    55000000,
-                    60000000,
-                    65000000,
-                    70000000,
-                    75000000,
-                    80000000,
-                    85000000,
-                    90000000)
+inside_list = c(1, 500000,
+                1000000,
+                2000000,
+                3000000,
+                4000000,
+                5000000,
+                6000000,
+                7000000,
+                8000000,
+                9000000,
+                10000000,
+                11000000)
 
-outside_list= c(1000000,
-                    5000000,
-                    10000000,
-                    15000000,
-                    20000000,
-                    25000000,
-                    35000000,
-                    40000000,
-                    45000000,
-                    50000000,
-                    55000000,
-                    60000000,
-                    65000000,
-                    70000000,
-                    75000000,
-                    80000000,
-                    85000000,
-                    90000000,
-                    96584795)
+outside_list= c(500000,
+                1000000,
+                2000000,
+                3000000,
+                4000000,
+                5000000,
+                6000000,
+                7000000,
+                8000000,
+                9000000,
+                10000000,
+                11000000,
+                11540623)
 
-for (i in 1:19) {
+for (i in 1:13) {
   inside_index <- inside_list[i]
   outside_index <- outside_list[i]
   usdot_subset <- usdot_combined %>% 
@@ -273,18 +258,6 @@ overlay_grid <- st_make_grid(qgis_bbox, cellsize = 2000,
 
 overlay_grid <- read_sf('processed/2km_hexagon_grid.gpkg')
 
-
-node_list <- list.files('outputs/node_folder/node_pieces/', 
-                            pattern = '*.gpkg',
-                            full.names = TRUE,
-                            recursive = TRUE)
-
-for (i in 1:19) {
- interior_nodes  <- read_sf(node_list[i]) 
- overlay_grid <- st_join(overlay_grid, interior_nodes)
- print(paste('Completed:', i))
-}
-
 overlay_grid <- overlay_grid %>% rowid_to_column('hex_id')
 
 overlay_grid$hex_group <- as.numeric(cut_number(overlay_grid$hex_id, 1000))
@@ -294,6 +267,47 @@ for (x in 1:1000) {
   write_sf(overlay_subset, paste0('outputs/overlay_grid_segments/hex_group_', x, '.gpkg'))
   print(paste('Completed:', x))
 }
+
+hex_list <- list.files('outputs/overlay_grid_segments/', 
+                            pattern = '*.gpkg',
+                            full.names = TRUE,
+                            recursive = TRUE)
+
+node_list <- list.files('outputs/node_folder/node_pieces/', 
+                            pattern = '*.gpkg',
+                            full.names = TRUE,
+                            recursive = TRUE)
+
+
+table_template <- tibble(hexid = numeric(),
+                         node_id = numeric(),
+                         usdot_id = numeric(),
+                         country = numeric(),
+                         jurisdiction = character(),
+                         road_number = character(),
+                         road_name = character(),
+                         surface_type = character(),
+                         lanes = numeric())
+
+
+for (x in 1:1000) {
+  hex_segment  <- read_sf(hex_list[x]) %>% select(-hex_group)
+  for (i in 1:13) {
+    interior_nodes  <- read_sf(node_list[i])
+    hex_interior <- st_join(hex_segment, interior_nodes) %>% st_drop_geometry()
+    table_template <- rbind(table_template, hex_interior)
+    print(paste('Interior done:', i))
+}
+  print(paste('Completed:', x))
+}
+
+
+
+
+
+
+
+
 
 ###
 
@@ -426,4 +440,48 @@ write_sf(hexagon_grid_joined, 'outputs/network_components/hexagon_grid.gpkg')
 
 ```
 
+```{r}
+hexagon_grid <- read_sf('outputs/network_components/hexagon_grid.gpkg')
+
+hex_centroids <- hexagon_grid %>% st_centroid() %>%  
+  mutate(x = sf::st_coordinates(.)[,1],
+         y = sf::st_coordinates(.)[,2]) %>% 
+  st_drop_geometry()
+
+write_rds(hex_centroids, 'outputs/network_components/hexagon_centroids.rds')
+
+###
+
+hex_centroids <- read_rds('outputs/network_components/hexagon_centroids.rds')
+
+hex_centroids <- hex_centroids %>% rowid_to_column('hex_rowid')
+
+hex_comparitor <- hex_centroids %>% select(hex_rowid,x, y)
+
+hex_centroids <- hex_centroids %>% group_by(hex_rowid)
+
+test <- hex_centroids %>% filter(hex_id == 6724147)
+
+
+edge_generator <- function(subject_tibble) { 
+  subject_x = subject_tibble$x
+  subject_y = subject_tibble$y
+  subject_id = subject_tibble$hex_rowid
+  hex_edges <- hex_centroids %>% select(hex_rowid, x, y) %>% 
+    mutate(geom = paste0('LINESTRING (', subject_x, ' ', subject_y, ', ',
+                            x, ' ', y, ')')) %>% 
+    mutate(subject_id = subject_id) %>% 
+    mutate(edge_id = paste0(subject_id, '_', hex_rowid)) %>% 
+    st_as_sf(wkt = 'geom', crs = 'ESRI:102008') %>% 
+    mutate(length = as.numeric(st_length(geom))) %>% 
+    filter(length < 2001) %>% 
+    filter(length != 0) %>% 
+    select(hex_rowid, subject_id, edge_id, geom)
+  return(hex_edges)
+  }
+
+
+
+
+```
 
