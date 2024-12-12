@@ -231,7 +231,7 @@ outside_list= c(500000,
                 9000000,
                 10000000,
                 11000000,
-                11540623)
+                11538440)
 
 for (i in 1:13) {
   inside_index <- inside_list[i]
@@ -289,8 +289,8 @@ table_template <- tibble(hexid = numeric(),
                          surface_type = character(),
                          lanes = numeric())
 
-
-for (x in 1:1000) {
+joiner <- function(sequence) {
+for (x in sequence) {
   hex_segment  <- read_sf(hex_list[x]) %>% select(-hex_group)
   for (i in 1:13) {
     interior_nodes  <- read_sf(node_list[i])
@@ -298,145 +298,58 @@ for (x in 1:1000) {
     table_template <- rbind(table_template, hex_interior)
     print(paste('Interior done:', i))
 }
-  print(paste('Completed:', x))
+  table_export <- table_template
+  write_rds(table_export, paste0('outputs/overlay_grid_joined/overlay_grid_joined_', x, '.rds'))
+  table_template <- tibble(hexid = numeric(),
+                         node_id = numeric(),
+                         usdot_id = numeric(),
+                         country = numeric(),
+                         jurisdiction = character(),
+                         road_number = character(),
+                         road_name = character(),
+                         surface_type = character(),
+                         lanes = numeric())
+  return(table_export)
+}
 }
 
+plan(callr, workers = 6)
+options(future.globals.maxSize= 891289600)
 
 
+joined <- future_map(1:1000, ~joiner(.x))
 
+joined_table <- bind_rows(joined)
 
+write_rds(joined_table, 'outputs/overlay_grid_joined/overlay_tables/joined_table.rds')
 
+joined_table <- drop_na(joined_table)
 
+write_rds(joined_table, 'outputs/overlay_grid_joined/overlay_tables/joined_table_na_dropped.rds')
 
+joined_table <- read_rds('outputs/overlay_grid_joined/overlay_tables/joined_table_na_dropped.rds')
 
-###
+joined_table_summarized <- joined_table %>% select(hex_id, country, jurisdiction,
+                                                   surface_type, surface_type,
+                                                   lanes, speed_limit, class)
 
-overlay_subset_list <- list.files('outputs/overlay_grid_segments/', 
-                            pattern = 'hex_group_*',
-                            full.names = TRUE,
-                            recursive = TRUE)
-
-overlay_subset_path = 'outputs/overlay_grid_joined/'
-
-counter = 1
-
-for (x in overlay_subset_list) {
-  hexagon_subset <- read_sf(x)
-  hexagon_subset <- hexagon_subset %>%
-  filter(st_intersects(., usdot_sf, sparse = FALSE)[1,])
-  hexagon_joined <- st_join(hexagon_subset, usdot_sf) 
-  write_sf(hexagon_joined, paste0(overlay_subset_path, 'overlay_joined_', 
-                                  counter, '.gpkg'))
-  print(paste('Completed:', x))
-  counter = counter + 1 
-  }
-  
-overlay_joined_list <- list.files('outputs/overlay_grid_joined/', 
-                            pattern = '*.gpkg',
-                            full.names = TRUE,
-                            recursive = TRUE)
-
-
-###
-
-counter = 1
-
-for (x in overlay_joined_list) {
-  interior_table <- tibble(hex_id = numeric(),
-                             country = numeric(),
-                             jurisdiction = character(),
-                             surface = numeric(),
-                             lanes = numeric(),
-                             speed_limit = numeric())
-  # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  hex_interior <- read_sf(x) %>% drop_na() %>% st_drop_geometry()
-  
-  if  (nrow(na.omit(hex_interior)) > 0) {
-    hex_interior$surface_type <- replace_na(hex_interior$surface_type, 'Unpaved' )
-    hex_interior$surface_type <- case_match(hex_interior$surface_type, 
+joined_table_summarized$surface_type <- case_match(joined_table_summarized$surface_type, 
                                             'Unpaved' ~ '1', 
                                             'Paved' ~ '2')
-    hex_interior$surface_type <- as.numeric(hex_interior$surface_type)
-    id_list<- as.vector(unique(hex_interior$hex_id))
-    for (y in id_list) {
-      hex_filtered <- hex_interior %>% filter(hex_id == y)
-      int_country <- hex_filtered %>% count(country, sort = TRUE) %>% 
-        st_drop_geometry() %>% 
-        pluck(1, 1) %>% 
-        as.numeric()
-      #~ 
-      int_jurisdiction <- hex_filtered %>% count(jurisdiction, sort = TRUE) %>% 
-        st_drop_geometry() %>% 
-        pluck(1, 1) %>% 
-        as.character()
-      # ~
-      int_surface <- max(hex_filtered$surface_type)
-      int_lanes <- max(hex_filtered$lanes)
-      int_speed_limit <- max(hex_filtered$speed_limit)
-    
-      scratch_tibble <- tibble(hex_id = numeric(),
-                             country = numeric(),
-                             jurisdiction = character(),
-                             surface = numeric(),
-                             lanes = numeric(),
-                             speed_limit = numeric())
-      # ~
-      scratch_tibble <- scratch_tibble %>% 
-      add_row(hex_id = as.numeric(y),
-             country = int_country,
-             jurisdiction = int_jurisdiction,
-             surface = int_surface,
-             lanes = int_lanes,
-             speed_limit = int_speed_limit)
-      interior_table <- rbind(interior_table, scratch_tibble) 
-      }
-    
-  } else {
-    print('No data: skipping!')
-  }
- 
-  write_csv(interior_table, paste0('outputs/summarized_hexagons/hexagon_chunk_', counter, '.csv'))
-  print(paste('Completed:', counter))
-  counter = counter + 1
-}
 
-hexagon_filtered <- list.files('outputs/summarized_hexagons/', 
-                            pattern = '*.csv',
-                            full.names = TRUE,
-                            recursive = TRUE) %>% 
-  as.vector()
+joined_table_summarized$surface_type <- as.numeric(joined_table_summarized$surface_type)
+
+joined_table_summarized <- joined_table %>% 
+  group_by(hex_id) %>% 
+  summarize(surface_type = max(surface_type),
+            lanes = max(lanes),
+            speed_limit = max(speed_limit))
+
+hex_final <- left_join(overlay_grid, joined_table_summarized, by = 'hex_id') %>% 
+  drop_na()
 
 
-for (x in hexagon_filtered) {
-  hexagon_interior <- read_csv(x)
-  
-  if (nrow(na.omit(hexagon_interior)) > 0) {
-    print('Success!')
-  } else {
-    file.remove(x)
-  }
-}
-
-
-hexagon_filtered <- list.files('outputs/summarized_hexagons/', 
-                            pattern = '*.csv',
-                            full.names = TRUE,
-                            recursive = TRUE)
-
-final_table <- lapply(hexagon_filtered, read_csv) %>% bind_rows()
-
-overlay_subset_list <- list.files('outputs/overlay_grid_segments/', 
-                            pattern = 'hex_group_*',
-                            full.names = TRUE,
-                            recursive = TRUE)
-
-hexagon_grid <- lapply(overlay_subset_list, read_sf) %>% bind_rows()
-
-hexagon_grid_joined <- left_join(hexagon_grid, final_table, by = 'hex_id')
-
-hexagon_grid_joined <- hexagon_grid_joined %>% drop_na()
-
-write_sf(hexagon_grid_joined, 'outputs/network_components/hexagon_grid.gpkg')
+write_sf(hex_final, 'outputs/network_components/hex_grid.gpkg')
 
 ```
 
