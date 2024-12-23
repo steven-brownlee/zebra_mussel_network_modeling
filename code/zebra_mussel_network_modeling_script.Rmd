@@ -319,11 +319,11 @@ options(future.globals.maxSize= 891289600)
 
 joined <- future_map(1:1000, ~joiner(.x))
 
-joined_table <- bind_rows(joined)
+joined <- bind_rows(joined)
 
-write_rds(joined_table, 'outputs/overlay_grid_joined/overlay_tables/joined_table.rds')
+write_rds(joined, 'outputs/overlay_grid_joined/overlay_tables/joined_table.rds')
 
-joined_table <- drop_na(joined_table)
+joined_table <- drop_na(joined)
 
 write_rds(joined_table, 'outputs/overlay_grid_joined/overlay_tables/joined_table_na_dropped.rds')
 
