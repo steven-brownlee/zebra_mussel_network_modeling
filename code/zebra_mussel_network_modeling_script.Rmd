@@ -128,18 +128,9 @@ north_america_metro <- rbind(us_metro, canada_metro)
 
 
 ```{r}
-usdot_road_network <- usdot_road_network %>% filter(ID != 554663 & 
-                                                      ID != 554677 &
-                                                      ID != 554668 &
-                                                      ID != 554678 &
-                                                      ID != 554667 &
-                                                      ID != 554666)
 
 usdot_road_network <- usdot_road_network %>% rownames_to_column('seg_id')
 
-# Cleaning: remove ID: 554663, 554677, 554668, 554678, 554667, 554667
-
-#usdot_road_network <- usdot_road_network %>% mutate(length_m = LENGTH*1000)
 
 plan(callr, workers = 6)
 options(future.globals.maxSize= 891289600)
@@ -242,7 +233,7 @@ outside_list= c(500000,
                 9000000,
                 10000000,
                 11000000,
-                11539260)
+                11544435)
 
 for (i in 1:13) {
   inside_index <- inside_list[i]

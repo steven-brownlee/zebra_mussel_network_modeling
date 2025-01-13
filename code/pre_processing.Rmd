@@ -58,7 +58,7 @@ library(qgisprocess)
 
 ```{r}
 
-na_bbox <- read_sf('data_directory/qgis_bbox.gpkg')
+na_bbox <- read_sf('processed/qgis_bbox.gpkg')
 
 ###
 
@@ -71,7 +71,7 @@ zm_occ_sf <- st_as_sf(zm_occ, coords = c('Longitude', 'Latitude'),
 
 zm_occ_sf <- st_intersection(zm_occ_sf, na_bbox)
 
-write_sf(zm_occ_sf, 'data_directory/dreissnid_occurrences.gpkg')
+write_sf(zm_occ_sf, 'processed/dreissnid_occurrences.gpkg')
 
 road_network <- read_sf('downloads/us_dot_road_network/NTAD_North_American_Roads_2691167086962748384.gpkg')
 
@@ -79,7 +79,15 @@ road_network <- road_network %>% filter(SURFACE == 'Unpaved' | SURFACE == 'Paved
 
 road_network <- st_intersection(road_network, na_bbox)
 
-write_sf(road_network, 'data_directory/usdot_road_network.gpkg')
+road_network <- road_network %>% filter(ID != 554663 & 
+                                          ID != 554677 &
+                                          ID != 554668 &
+                                          ID != 554678 &
+                                          ID != 554667 &
+                                          ID != 554666)
+
+
+write_sf(road_network, 'processed/usdot_road_network.gpkg')
 
 boundaries <- st_read('downloads/political_boundaries/political_boundaries/boundaries_p_2021_v3.shp')
 
@@ -95,9 +103,9 @@ coastline <- st_as_sf(coastline)
 
 coastline <- st_intersection(coastline, na_bbox)
 
-write_sf(boundaries, 'data_directory/cec_political_boundaries.gpkg')
+write_sf(boundaries, 'processed/cec_political_boundaries.gpkg')
 
-write_sf(coastline, 'data_directory/cec_coastline.gpkg')
+write_sf(coastline, 'processed/cec_coastline.gpkg')
 
 pop_places <- read_sf('downloads/populated_places/popPlaces_v2.shp')
 
@@ -107,7 +115,7 @@ pop_places <- pop_places %>% filter(COUNTRY == 'USA' | COUNTRY == 'CAN' | COUNTR
 
 pop_places <- st_intersection(pop_places, na_bbox)
 
-write_sf(pop_places, 'data_directory/cec_populated_places.gpkg')
+write_sf(pop_places, 'processed/cec_populated_places.gpkg')
 
 lakes <- read_sf('downloads/lakes_and_rivers/northamerica_lakes_cec_2023.shp')
 
@@ -115,7 +123,7 @@ lakes <- lakes %>% st_transform(crs = 4326) %>% st_make_valid()
 
 lakes <- st_intersection(lakes, na_bbox)
 
-write_sf(lakes, 'data_directory/cec_lakes.gpkg')
+write_sf(lakes, 'processed/cec_lakes.gpkg')
 
 # Canada metropolitan areas
 
