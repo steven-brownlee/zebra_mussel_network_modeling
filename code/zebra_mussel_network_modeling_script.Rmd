@@ -357,26 +357,90 @@ write_sf(hex_final, 'outputs/network_components/hex_grid_final.gpkg')
 ```
 
 ```{r}
-hexagon_grid <- read_sf('outputs/network_components/hexagon_grid.gpkg')
+hexagon_grid <- read_sf('outputs/network_components/hex_grid_final.gpkg') %>% 
+  rowid_to_column('hex_rowid')
 
 hex_centroids <- hexagon_grid %>% st_centroid() %>%  
   mutate(x = sf::st_coordinates(.)[,1],
-         y = sf::st_coordinates(.)[,2]) %>% 
-  st_drop_geometry()
+         y = sf::st_coordinates(.)[,2]) 
 
 write_rds(hex_centroids, 'outputs/network_components/hexagon_centroids.rds')
 
 ###
 
-hex_centroids <- read_rds('outputs/network_components/hexagon_centroids.rds')
+#hex_centroids <- read_rds('outputs/network_components/hexagon_centroids.rds')
 
-hex_centroids <- hex_centroids %>% rowid_to_column('hex_rowid')
 
-hex_comparitor <- hex_centroids %>% select(hex_rowid,x, y)
 
-hex_centroids <- hex_centroids %>% group_by(hex_rowid)
 
-test <- hex_centroids %>% filter(hex_id == 6724147)
+plan(callr, workers = 6)
+options(future.globals.maxSize= 891289600)
+
+edging <- function(row_subset) {
+  
+  pairwise_distance_table <- tibble(hex_rowid_a = numeric(),
+                                 hex_rowid_b = numeric(),
+                                 comb_hex_id = character(), 
+                                 distance = numeric(),
+                                 x_1 = numeric(),
+                                 y_1 = numeric(),
+                                 x_2 = numeric(),
+                                 y_2 = numeric())
+
+  for (x in row_subset) {
+  xval = eval(x)
+  coord_1 <- hex_centroids %>% filter(hex_rowid == xval)
+  
+  for (y in 1:518769) {
+    yval = eval(y)
+    coord_2 <- hex_centroids %>% filter(hex_rowid == yval)
+    pair_dist <- st_distance(coord_1, coord_2)
+    combined_hex_rowid <- paste0(as.character(coord_1$hex_rowid), '_', as.character(coord_2$hex_rowid))
+    interior_table <- tibble(hex_rowid_a = coord_1$hex_rowid,
+                                 hex_rowid_b = coord_2$hex_rowid,
+                                 comb_hex_id = combined_hex_rowid, 
+                                 distance = as.numeric(pair_dist),
+                                 x_1 = coord_1$x,
+                                 y_1 = coord_1$y,
+                                 x_2 = coord_2$x,
+                                 y_2 = coord_2$y)
+    pairwise_distance_table <- rbind(pairwise_distance_table, interior_table)
+  }
+  }
+  
+  pairwise_distance_table <- pairwise_distance_table %>% filter(distance == 2000)
+  return(pairwise_distance_table)
+}
+
+edge_set <- future_map(1:518769, ~edging(.x))
+
+
+
+for (x in 1:5) {
+  xval = eval(x)
+  coord_1 <- hex_centroids %>% filter(hex_rowid == xval)
+  
+  for (y in 1:200) {
+    yval = eval(y)
+    coord_2 <- hex_centroids %>% filter(hex_rowid == yval)
+    pair_dist <- st_distance(coord_1, coord_2)
+    combined_hex_rowid <- paste0(as.character(coord_1$hex_rowid), '_', as.character(coord_2$hex_rowid))
+    interior_table <- tibble(hex_rowid_a = coord_1$hex_rowid,
+                                 hex_rowid_b = coord_2$hex_rowid,
+                                 comb_hex_id = combined_hex_rowid, 
+                                 distance = as.numeric(pair_dist),
+                                 x_1 = coord_1$x,
+                                 y_1 = coord_1$y,
+                                 x_2 = coord_2$x,
+                                 y_2 = coord_2$y)
+    pairwise_distance_table <- rbind(pairwise_distance_table, interior_table)
+    print(paste('Completed C1', x, 'C2', y))
+  }
+  print(paste('Completed:', x))
+}
+
+
+
 
 
 edge_generator <- function(subject_tibble) { 
