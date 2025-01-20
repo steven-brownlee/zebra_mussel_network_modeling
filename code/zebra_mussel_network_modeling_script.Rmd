@@ -371,97 +371,57 @@ write_rds(hex_centroids, 'outputs/network_components/hexagon_centroids.rds')
 #hex_centroids <- read_rds('outputs/network_components/hexagon_centroids.rds')
 
 
+hex_id_array <- hex_centroids %>% 
+  select(hex_rowid, x, y) %>% 
+  rename(hex_rowid_2 = hex_rowid, x_2 = x, y_2 = y)
 
+hex_id_array_aspatial <- hex_id_array %>% st_drop_geometry()
+
+###
 
 plan(callr, workers = 6)
-options(future.globals.maxSize= 891289600)
+options(future.globals.maxSize = 891289600)
 
-edging <- function(row_subset) {
+edge_generator <- function(row_subset) {
   
-  pairwise_distance_table <- tibble(hex_rowid_a = numeric(),
-                                 hex_rowid_b = numeric(),
-                                 comb_hex_id = character(), 
-                                 distance = numeric(),
-                                 x_1 = numeric(),
-                                 y_1 = numeric(),
-                                 x_2 = numeric(),
-                                 y_2 = numeric())
-
+  distance_array_template <- tibble(hex_rowid_1 = numeric(),
+                                    x_1 = numeric(),
+                                    y_1 = numeric(),
+                                    hex_rowid_2 = numeric(),
+                                    x_2 = numeric(),
+                                    y_2 = numeric(),
+                                    comb_hex_rowid = character())
+  
   for (x in row_subset) {
-  xval = eval(x)
-  coord_1 <- hex_centroids %>% filter(hex_rowid == xval)
-  
-  for (y in 1:518769) {
-    yval = eval(y)
-    coord_2 <- hex_centroids %>% filter(hex_rowid == yval)
-    pair_dist <- st_distance(coord_1, coord_2)
-    combined_hex_rowid <- paste0(as.character(coord_1$hex_rowid), '_', as.character(coord_2$hex_rowid))
-    interior_table <- tibble(hex_rowid_a = coord_1$hex_rowid,
-                                 hex_rowid_b = coord_2$hex_rowid,
-                                 comb_hex_id = combined_hex_rowid, 
-                                 distance = as.numeric(pair_dist),
-                                 x_1 = coord_1$x,
-                                 y_1 = coord_1$y,
-                                 x_2 = coord_2$x,
-                                 y_2 = coord_2$y)
-    pairwise_distance_table <- rbind(pairwise_distance_table, interior_table)
+    xval = eval(x)
+    coord_1 <- hex_centroids %>% filter(hex_rowid == xval)
+    distance_array <- as_tibble(st_is_within_distance(coord_1, hex_centroids, 
+                                                      dist = 2000, sparse = FALSE))
+    distance_array <- pivot_longer(distance_array,
+                           everything(),
+                           names_to = 'prefix', 
+                           values_to = 'within_threshold') %>% 
+    select(within_threshold) %>% 
+      st_drop_geometry()
+    
+    distance_array <- bind_cols(hex_id_array, distance_array)
+    
+    distance_array <-  distance_array %>% filter(within_threshold == TRUE) %>%
+      mutate(hex_rowid_1 = xval, 
+         x_1 = coord_1$x,
+         y_1 = coord_1$y) %>% 
+      mutate(comb_hex_rowid = paste0(as.character(hex_rowid_1), '_', as.character(hex_rowid_2))) %>%
+      select(hex_rowid_1, x_1, y_1, hex_rowid_2, x_2, y_2, comb_hex_rowid)
+    distance_array <- rbind(distance_array_template, distance_array)
   }
-  }
-  
-  pairwise_distance_table <- pairwise_distance_table %>% filter(distance == 2000)
-  return(pairwise_distance_table)
+  return(distance_array)
 }
 
-edge_set <- future_map(1:518769, ~edging(.x))
+edge_set <- future_map(1:20, ~edge_generator(.x))
 
+edge_collection <- bind_rows(edge_set)
 
-
-for (x in 1:5) {
-  xval = eval(x)
-  coord_1 <- hex_centroids %>% filter(hex_rowid == xval)
-  
-  for (y in 1:200) {
-    yval = eval(y)
-    coord_2 <- hex_centroids %>% filter(hex_rowid == yval)
-    pair_dist <- st_distance(coord_1, coord_2)
-    combined_hex_rowid <- paste0(as.character(coord_1$hex_rowid), '_', as.character(coord_2$hex_rowid))
-    interior_table <- tibble(hex_rowid_a = coord_1$hex_rowid,
-                                 hex_rowid_b = coord_2$hex_rowid,
-                                 comb_hex_id = combined_hex_rowid, 
-                                 distance = as.numeric(pair_dist),
-                                 x_1 = coord_1$x,
-                                 y_1 = coord_1$y,
-                                 x_2 = coord_2$x,
-                                 y_2 = coord_2$y)
-    pairwise_distance_table <- rbind(pairwise_distance_table, interior_table)
-    print(paste('Completed C1', x, 'C2', y))
-  }
-  print(paste('Completed:', x))
-}
-
-
-
-
-
-edge_generator <- function(subject_tibble) { 
-  subject_x = subject_tibble$x
-  subject_y = subject_tibble$y
-  subject_id = subject_tibble$hex_rowid
-  hex_edges <- hex_centroids %>% select(hex_rowid, x, y) %>% 
-    mutate(geom = paste0('LINESTRING (', subject_x, ' ', subject_y, ', ',
-                            x, ' ', y, ')')) %>% 
-    mutate(subject_id = subject_id) %>% 
-    mutate(edge_id = paste0(subject_id, '_', hex_rowid)) %>% 
-    st_as_sf(wkt = 'geom', crs = 'ESRI:102008') %>% 
-    mutate(length = as.numeric(st_length(geom))) %>% 
-    filter(length < 2001) %>% 
-    filter(length != 0) %>% 
-    select(hex_rowid, subject_id, edge_id, geom)
-  return(hex_edges)
-  }
-
-
-
+####
 
 ```
 
