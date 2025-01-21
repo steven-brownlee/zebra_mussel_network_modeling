@@ -364,7 +364,7 @@ hex_centroids <- hexagon_grid %>% st_centroid() %>%
   mutate(x = sf::st_coordinates(.)[,1],
          y = sf::st_coordinates(.)[,2]) 
 
-write_rds(hex_centroids, 'outputs/network_components/hexagon_centroids.rds')
+#write_rds(hex_centroids, 'outputs/network_components/hexagon_centroids.rds')
 
 ###
 
@@ -379,10 +379,11 @@ hex_id_array_aspatial <- hex_id_array %>% st_drop_geometry()
 
 ###
 
-plan(callr, workers = 6)
+plan(callr, workers = 12)
 options(future.globals.maxSize = 891289600)
 
 edge_generator <- function(row_subset) {
+  
   
   distance_array_template <- tibble(hex_rowid_1 = numeric(),
                                     x_1 = numeric(),
@@ -413,14 +414,48 @@ edge_generator <- function(row_subset) {
       mutate(comb_hex_rowid = paste0(as.character(hex_rowid_1), '_', as.character(hex_rowid_2))) %>%
       select(hex_rowid_1, x_1, y_1, hex_rowid_2, x_2, y_2, comb_hex_rowid)
     distance_array <- rbind(distance_array_template, distance_array)
+     p()
   }
   return(distance_array)
 }
 
-edge_set <- future_map(1:20, ~edge_generator(.x))
+inside_list = c(1, 25000, 50000, 75000, 100000, 125000, 150000, 175000, 
+                200000, 225000, 250000, 275000, 300000, 325000, 350000, 
+                375000, 400000, 425000, 450000, 475000, 500000)
 
-edge_collection <- bind_rows(edge_set)
+outside_list= c(25000, 50000, 75000, 100000, 125000, 150000, 175000, 200000, 
+                225000, 250000, 275000, 300000, 325000, 350000, 375000, 400000, 
+                425000, 450000, 475000, 500000, 518769)
 
+outer_process <- function(ind_1, ind_2) {
+
+for (x in ind_1:ind_2) {
+  index_1 <- inside_list[x]
+  index_2 <- outside_list[x]
+  comb_index <- index_1:index_2
+  p <- progressr::progressor(along = comb_index)
+  edge_set <- future_map(1:250000, ~{ p()
+    edge_generator(.x)})
+  edge_collection <- bind_rows(edge_set)
+  write_rds(edge_collection, 
+            paste0('outputs/network_components/edge_folder/', x, 
+                   '_edge_collection.rds'))
+}
+}
+
+# Computer 1:
+  
+with_progress({outer_process(1, 7)})
+
+# Computer 2:
+  
+with_progress({outer_process(7, 14)})
+
+# Computer 3:
+
+with_progress({outer_process(14, 21)})
+
+  
 ####
 
 ```
