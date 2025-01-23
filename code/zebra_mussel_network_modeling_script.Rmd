@@ -364,26 +364,17 @@ hex_centroids <- hexagon_grid %>% st_centroid() %>%
   mutate(x = sf::st_coordinates(.)[,1],
          y = sf::st_coordinates(.)[,2]) 
 
-#write_rds(hex_centroids, 'outputs/network_components/hexagon_centroids.rds')
+hex_centroids_aspatial <- hex_centroids %>% st_drop_geometry()
+
 
 ###
 
-#hex_centroids <- read_rds('outputs/network_components/hexagon_centroids.rds')
+row_indices <- split(hex_centroids$hex_rowid, cut(hex_centroids$hex_rowid, breaks = 160))
 
-
-hex_id_array <- hex_centroids %>% 
-  select(hex_rowid, x, y) %>% 
-  rename(hex_rowid_2 = hex_rowid, x_2 = x, y_2 = y)
-
-hex_id_array_aspatial <- hex_id_array %>% st_drop_geometry()
 
 ###
-
-plan(callr, workers = 12)
-options(future.globals.maxSize = 891289600)
 
 edge_generator <- function(row_subset) {
-  
   
   distance_array_template <- tibble(hex_rowid_1 = numeric(),
                                     x_1 = numeric(),
@@ -396,65 +387,66 @@ edge_generator <- function(row_subset) {
   for (x in row_subset) {
     xval = eval(x)
     coord_1 <- hex_centroids %>% filter(hex_rowid == xval)
-    distance_array <- as_tibble(st_is_within_distance(coord_1, hex_centroids, 
-                                                      dist = 2000, sparse = FALSE))
-    distance_array <- pivot_longer(distance_array,
-                           everything(),
-                           names_to = 'prefix', 
-                           values_to = 'within_threshold') %>% 
-    select(within_threshold) %>% 
-      st_drop_geometry()
+    matches <- as_tibble(as.data.frame(st_is_within_distance(coord_1, hex_centroids, 
+                                                      dist = 2000))) %>% 
+      select(col.id) %>% deframe()
     
-    distance_array <- bind_cols(hex_id_array, distance_array)
-    
-    distance_array <-  distance_array %>% filter(within_threshold == TRUE) %>%
-      mutate(hex_rowid_1 = xval, 
-         x_1 = coord_1$x,
-         y_1 = coord_1$y) %>% 
-      mutate(comb_hex_rowid = paste0(as.character(hex_rowid_1), '_', as.character(hex_rowid_2))) %>%
-      select(hex_rowid_1, x_1, y_1, hex_rowid_2, x_2, y_2, comb_hex_rowid)
-    distance_array <- rbind(distance_array_template, distance_array)
-     p()
+    coord_matches <- hex_centroids_aspatial %>% 
+      filter(hex_rowid %in% matches) %>% 
+      select(hex_rowid, x, y) %>% 
+      mutate(hex_rowid_1 = coord_1$hex_id,
+             x_1 = coord_1$x,
+             y_1 = coord_1$y) %>% 
+      rename(hex_rowid_2 = hex_rowid,
+             x_2 = x,
+             y_2 = y) %>% 
+      mutate(comb_id = paste0(as.character(hex_rowid_1), '_', as.character(hex_rowid_2)))
+   
+     distance_array_template <- rbind(distance_array_template, coord_matches)
   }
-  return(distance_array)
+  return(distance_array_template)
 }
 
-inside_list = c(1, 25000, 50000, 75000, 100000, 125000, 150000, 175000, 
-                200000, 225000, 250000, 275000, 300000, 325000, 350000, 
-                375000, 400000, 425000, 450000, 475000, 500000)
+# Florilegium: 
 
-outside_list= c(25000, 50000, 75000, 100000, 125000, 150000, 175000, 200000, 
-                225000, 250000, 275000, 300000, 325000, 350000, 375000, 400000, 
-                425000, 450000, 475000, 500000, 518769)
+plan(callr, workers = 6)
+options(future.globals.maxSize = 891289600)  
 
-outer_process <- function(ind_1, ind_2) {
-
-for (x in ind_1:ind_2) {
-  index_1 <- inside_list[x]
-  index_2 <- outside_list[x]
-  comb_index <- index_1:index_2
-  p <- progressr::progressor(along = comb_index)
-  edge_set <- future_map(1:250000, ~{ p()
-    edge_generator(.x)})
-  edge_collection <- bind_rows(edge_set)
-  write_rds(edge_collection, 
-            paste0('outputs/network_components/edge_folder/', x, 
-                   '_edge_collection.rds'))
-}
+for  (i in 1:160) {
+  ival = eval(i)
+  edge_collection <- future_map(row_indices[ival], ~edge_generator(.x)) %>% bind_rows
+  write_rds(edge_collection, paste0('outputs/network_components/edge_folder/edge_collection_',
+                                   ival, '.rds'))
+  print(paste('Completed:', ival))
 }
 
-# Computer 1:
-  
-with_progress({outer_process(1, 7)})
 
-# Computer 2:
-  
-with_progress({outer_process(7, 14)})
+# Advesperascit:
 
-# Computer 3:
+plan(callr, workers = 12)
+options(future.globals.maxSize = 891289600)
 
-with_progress({outer_process(14, 21)})
+for  (i in 1:160) {
+  ival = eval(i)
+  edge_collection <- future_map(row_indices[ival], ~edge_generator(.x)) %>% bind_rows
+  write_rds(edge_collection, paste0('outputs/network_components/edge_folder/edge_collection_',
+                                   ival, '.rds'))
+  print(paste('Completed:', ival))
+}
 
+
+# Cognoscere
+
+plan(callr, workers = 20)
+options(future.globals.maxSize = 891289600)
+
+for  (i in 1:160) {
+  ival = eval(i)
+  edge_collection <- future_map(row_indices[ival], ~edge_generator(.x)) %>% bind_rows
+  write_rds(edge_collection, paste0('outputs/network_components/edge_folder/edge_collection_',
+                                   ival, '.rds'))
+  print(paste('Completed:', ival))
+}
   
 ####
 
