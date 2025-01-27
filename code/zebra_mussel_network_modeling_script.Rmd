@@ -366,7 +366,6 @@ hex_centroids <- hexagon_grid %>% st_centroid() %>%
 
 hex_centroids_aspatial <- hex_centroids %>% st_drop_geometry()
 
-
 ###
 
 row_indices <- split(hex_centroids$hex_rowid, cut(hex_centroids$hex_rowid, breaks = 160))
@@ -388,7 +387,7 @@ edge_generator <- function(row_subset) {
     xval = eval(x)
     coord_1 <- hex_centroids %>% filter(hex_rowid == xval)
     matches <- as_tibble(as.data.frame(st_is_within_distance(coord_1, hex_centroids, 
-                                                      dist = 2000))) %>% 
+                                                      dist = 2500))) %>% 
       select(col.id) %>% deframe()
     
     coord_matches <- hex_centroids_aspatial %>% 
@@ -412,7 +411,7 @@ edge_generator <- function(row_subset) {
 plan(callr, workers = 6)
 options(future.globals.maxSize = 891289600)  
 
-for  (i in 1:160) {
+for  (i in 1:40) {
   ival = eval(i)
   edge_collection <- future_map(row_indices[ival], ~edge_generator(.x)) %>% bind_rows
   write_rds(edge_collection, paste0('outputs/network_components/edge_folder/edge_collection_',
@@ -426,7 +425,7 @@ for  (i in 1:160) {
 plan(callr, workers = 12)
 options(future.globals.maxSize = 891289600)
 
-for  (i in 1:160) {
+for  (i in 40:80) {
   ival = eval(i)
   edge_collection <- future_map(row_indices[ival], ~edge_generator(.x)) %>% bind_rows
   write_rds(edge_collection, paste0('outputs/network_components/edge_folder/edge_collection_',
@@ -440,15 +439,38 @@ for  (i in 1:160) {
 plan(callr, workers = 20)
 options(future.globals.maxSize = 891289600)
 
-for  (i in 1:160) {
+for  (i in 80:120) {
   ival = eval(i)
   edge_collection <- future_map(row_indices[ival], ~edge_generator(.x)) %>% bind_rows
-  write_rds(edge_collection, paste0('outputs/network_components/edge_folder/edge_collection_',
+  write_rds(edge_collection, paste0('/home/steven/Downloads/edge_collection_',
                                    ival, '.rds'))
   print(paste('Completed:', ival))
 }
   
 ####
+
+edge_compilation <- list.files('outputs/network_components/edge_folder/', 
+                            pattern = '*.rds',
+                            full.names = TRUE,
+                            recursive = TRUE)
+
+edge_compilation <- lapply(edge_compilation, readRDS)
+
+
+edge_compilation <- edge_compilation %>% 
+mutate(geometry = paste0('LINESTRING (', x_1, ' ', y_1, ', ', x_2, ' ', y_2, ')' ))
+
+edge_compilation <- edge_compilation %>% st_as_sf(wkt = 'geometry', crs = 'ESRI:102008')
+
+write_sf(edge_compilation, '/home/steven/Downloads/edge_test.gpkg')
+
+
+test <- readRDS('/home/steven/Downloads/edge_collection_1.rds') %>% 
+mutate(geometry = paste0('LINESTRING (', x_1, ' ', y_1, ', ', x_2, ' ', y_2, ')' )) %>% 
+  st_as_sf(wkt = 'geometry', crs = 'ESRI:102008')
+
+write_sf(test, '/home/steven/Downloads/edge_revised.gpkg')
+
 
 ```
 
