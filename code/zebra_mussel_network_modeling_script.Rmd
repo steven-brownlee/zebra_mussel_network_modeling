@@ -126,6 +126,7 @@ north_america_metro <- rbind(us_metro, canada_metro)
 # Create node network for USDOT roads
 ```
 
+# Split road into manageable chunks
 
 ```{r}
 
@@ -251,6 +252,7 @@ for (i in 1:13) {
 ```
 
 
+# Join road data to grid
 ```{r}
 #overlay_grid <- st_make_grid(qgis_bbox, cellsize = 2000,
 #                             what = 'polygons', square = FALSE) %>% st_as_sf() %>% 
@@ -356,6 +358,8 @@ write_sf(hex_final, 'outputs/network_components/hex_grid_final.gpkg')
 
 ```
 
+# Edge generation
+
 ```{r}
 hexagon_grid <- read_sf('outputs/network_components/hex_grid_final.gpkg') %>% 
   rowid_to_column('hex_rowid')
@@ -363,6 +367,8 @@ hexagon_grid <- read_sf('outputs/network_components/hex_grid_final.gpkg') %>%
 hex_centroids <- hexagon_grid %>% st_centroid() %>%  
   mutate(x = sf::st_coordinates(.)[,1],
          y = sf::st_coordinates(.)[,2]) 
+
+write_sf(hex_centroids, '/home/steven/Downloads/centroids.gpkg')
 
 hex_centroids_aspatial <- hex_centroids %>% st_drop_geometry()
 
@@ -425,7 +431,7 @@ for  (i in 1:40) {
 plan(callr, workers = 12)
 options(future.globals.maxSize = 891289600)
 
-for  (i in 40:80) {
+for  (i in 68:80) {
   ival = eval(i)
   edge_collection <- future_map(row_indices[ival], ~edge_generator(.x)) %>% bind_rows
   write_rds(edge_collection, paste0('outputs/network_components/edge_folder/edge_collection_',
@@ -454,7 +460,7 @@ edge_compilation <- list.files('outputs/network_components/edge_folder/',
                             full.names = TRUE,
                             recursive = TRUE)
 
-edge_compilation <- lapply(edge_compilation, readRDS)
+edge_compilation <- lapply(edge_compilation, readRDS) %>% bind_rows()
 
 
 edge_compilation <- edge_compilation %>% 
@@ -472,5 +478,71 @@ mutate(geometry = paste0('LINESTRING (', x_1, ' ', y_1, ', ', x_2, ' ', y_2, ')'
 write_sf(test, '/home/steven/Downloads/edge_revised.gpkg')
 
 
+```
+
+# Point of origin generator
+
+```{r}
+
+canada_metro_areas <- read_sf('processed/canada_metro_areas.gpkg') %>% st_transform(crs = 'ESRI:102008')
+
+canada_filtered <- canada_metro_areas %>% select(CMANAME, PRNAME) %>%
+  rename(metro_name = PRNAME, prov_state_name = CMANAME) %>% 
+  mutate(country = 'Canada')
+
+us_metro_areas <- read_sf('processed/us_metro_areas.gpkg') %>% 
+  st_transform(crs = 'ESRI:102008')
+
+us_filtered <- us_metro_areas %>% select(NAME)
+
+
+us_filtered <- us_filtered %>% separate(NAME, sep = ',', c('metro_name', 'prov_state_name'), remove = F) %>% select(metro_name, prov_state_name) %>% 
+  mutate(country = 'US')
+
+north_america_metros <- bind_rows(canada_filtered, us_filtered)
+
+north_america_metros <- north_america_metros %>% rowid_to_column('metro_id')
+
+
+origin_template <- tibble(x = numeric(),
+                          y = numeric(),
+                         metro_id = numeric(),
+                         metro_name = character(),
+                         prov_state_name = character(),
+                         surface_type = character(),
+                         country = character() )
+
+
+for (i in 1:1094) {
+  m_val <- eval(i)
+  
+  metro_subset <- north_america_metros %>% filter(metro_id == m_val)
+  
+  total_origins <- st_intersection(hex_centroids, metro_subset)
+  
+  metro_rows <- nrow(total_origins)
+  
+  if (metro_rows > 10) {
+  origin_sample_size = 10
+} else {
+  origin_sample_size = metro_rows
+}
+  
+  origin_sample <- slice_sample(total_origins, 
+                                n = origin_sample_size) %>%
+    st_drop_geometry()
+  
+  origin_template <- bind_rows(origin_template, origin_sample)
+  
+  print(paste('Completed:', i))
+}
+
+
+origin_sample_complete <- origin_template %>% select(x, y, metro_id, metro_name,
+                                                     prov_state_name, country) %>% 
+  st_as_sf(coords = c('x', 'y'), crs = 'ESRI:102008')
+
+  
+  
 ```
 
