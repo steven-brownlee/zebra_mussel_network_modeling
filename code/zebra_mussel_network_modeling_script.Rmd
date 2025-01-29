@@ -368,7 +368,7 @@ hex_centroids <- hexagon_grid %>% st_centroid() %>%
   mutate(x = sf::st_coordinates(.)[,1],
          y = sf::st_coordinates(.)[,2]) 
 
-write_sf(hex_centroids, '/home/steven/Downloads/centroids.gpkg')
+write_sf(hex_centroids, 'outputs/network_components/centroids.gpkg')
 
 hex_centroids_aspatial <- hex_centroids %>% st_drop_geometry()
 
@@ -468,14 +468,8 @@ mutate(geometry = paste0('LINESTRING (', x_1, ' ', y_1, ', ', x_2, ' ', y_2, ')'
 
 edge_compilation <- edge_compilation %>% st_as_sf(wkt = 'geometry', crs = 'ESRI:102008')
 
-write_sf(edge_compilation, '/home/steven/Downloads/edge_test.gpkg')
+write_sf(edge_compilation, 'outputs/network_components/edge_collection.gpkg')
 
-
-test <- readRDS('/home/steven/Downloads/edge_collection_1.rds') %>% 
-mutate(geometry = paste0('LINESTRING (', x_1, ' ', y_1, ', ', x_2, ' ', y_2, ')' )) %>% 
-  st_as_sf(wkt = 'geometry', crs = 'ESRI:102008')
-
-write_sf(test, '/home/steven/Downloads/edge_revised.gpkg')
 
 
 ```
@@ -495,6 +489,10 @@ us_metro_areas <- read_sf('processed/us_metro_areas.gpkg') %>%
 
 us_filtered <- us_metro_areas %>% select(NAME)
 
+hex_centroids <- read_sf('/home/steven/Downloads/centroids.gpkg')
+
+
+###
 
 us_filtered <- us_filtered %>% separate(NAME, sep = ',', c('metro_name', 'prov_state_name'), remove = F) %>% select(metro_name, prov_state_name) %>% 
   mutate(country = 'US')
@@ -542,7 +540,7 @@ origin_sample_complete <- origin_template %>% select(x, y, metro_id, metro_name,
                                                      prov_state_name, country) %>% 
   st_as_sf(coords = c('x', 'y'), crs = 'ESRI:102008')
 
-  
+write_sf(origin_sample_complete, 'outputs/network_components/origin_collection.gpkg')
   
 ```
 
