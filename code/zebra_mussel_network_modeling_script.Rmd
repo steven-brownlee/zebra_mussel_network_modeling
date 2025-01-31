@@ -366,7 +366,8 @@ hexagon_grid <- read_sf('outputs/network_components/hex_grid_final.gpkg') %>%
 
 hex_centroids <- hexagon_grid %>% st_centroid() %>%  
   mutate(x = sf::st_coordinates(.)[,1],
-         y = sf::st_coordinates(.)[,2]) 
+         y = sf::st_coordinates(.)[,2]) %>% 
+  select(hex_rowid, surface_type, lanes, speed_limit, x, y, geom)
 
 write_sf(hex_centroids, 'outputs/network_components/centroids.gpkg')
 
@@ -431,7 +432,7 @@ for  (i in 1:40) {
 plan(callr, workers = 12)
 options(future.globals.maxSize = 891289600)
 
-for  (i in 68:80) {
+for  (i in 40:80) {
   ival = eval(i)
   edge_collection <- future_map(row_indices[ival], ~edge_generator(.x)) %>% bind_rows
   write_rds(edge_collection, paste0('outputs/network_components/edge_folder/edge_collection_',
