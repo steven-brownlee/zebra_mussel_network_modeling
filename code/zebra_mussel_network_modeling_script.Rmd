@@ -399,7 +399,7 @@ edge_generator <- function(row_subset) {
     coord_matches <- hex_centroids_aspatial %>% 
       filter(hex_rowid %in% matches) %>% 
       select(hex_rowid, x, y) %>% 
-      mutate(hex_rowid_1 = coord_1$hex_id,
+      mutate(hex_rowid_1 = coord_1$hex_rowid,
              x_1 = coord_1$x,
              y_1 = coord_1$y) %>% 
       rename(hex_rowid_2 = hex_rowid,
@@ -543,4 +543,82 @@ origin_sample_complete <- origin_template %>% select(x, y, metro_id, metro_name,
 write_sf(origin_sample_complete, 'outputs/network_components/origin_collection.gpkg')
   
 ```
+
+```{r}
+# nb: something wrong with hex id transposition, check
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+# Destination generation
+
+# Kelowna: 44296
+
+# West Kelowna: 44199, 43678
+
+# Vernon: 45796
+
+# Summerland: 43087
+
+# Penticton: 43163
+
+edge_collection<- read_sf('outputs/network_components/edge_collection.gpkg') %>% 
+   select(hex_rowid_1, hex_rowid_2) %>% 
+   rename(from = hex_rowid_1, to = hex_rowid_2)
+
+edge_collection$from <- as.character(edge_collection$from)
+
+edge_collection$to <- as.character(edge_collection$to)
+
+node_collection <- read_sf('outputs/network_components/centroids.gpkg') %>% 
+  select(hex_rowid) %>% 
+  rename(index = hex_rowid)
+
+
+# Stopgap
+
+edge_collection_test <- edge_collection %>% select(geom)
+
+edge_collection_test <- distinct(edge_collection_test)
+
+edge_collection_test <- edge_collection_test %>% rowid_to_column('edge_id')
+
+test <- edge_collection_test %>% filter(edge_id == 238614)
+
+buff <- st_buffer(test, 20)
+
+int <- st_intersection(node_collection, buff) %>% select(index) %>% st_drop_geometry()
+
+nrow(int)
+
+
+
+edge_corrector <- function(target) {
+  
+  new_edges <- tibble(from = character(),
+                    to = character(),
+                    geom = st_sfc(crs = 'ESRI:102008'))
+  
+  for (i in target) {
+  ival <- eval(i)
+  edge_intermediate <- edge_collection_test %>% filter(edge_id == ival)
+  buff <- st_buffer(edge_intermediate, 20)
+  int <- st_intersection(node_collection, buff) %>% select(index) %>% 
+    st_drop_geometry() %>% 
+    deframe()
+  edge_intermediate <- edge_intermediate %>% mutate(from = as.character(int[1]), to = as.character(int[2]))
+  new_edges <- bind_rows(new_edges, edge_intermediate)
+    
+  }
+  
+  return(new_edges)
+}
+
+plan(callr, workers = 20)
+options(future.globals.maxSize = 891289600)
+
+corrected_edges <- future_map(2:518769, ~edge_corrector(.x)) %>% bind_rows()
+
+```
+
+
 
