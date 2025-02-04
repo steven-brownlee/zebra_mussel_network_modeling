@@ -471,21 +471,27 @@ mutate(geometry = paste0('LINESTRING (', x_1, ' ', y_1, ', ', x_2, ' ', y_2, ')'
 edge_compilation <- edge_compilation %>% st_as_sf(wkt = 'geometry', crs = 'ESRI:102008')
 
 
-edge_collection <-  edge_compilation %>% 
-   select(hex_rowid_1, hex_rowid_2) %>% 
+edge_compilation <-  edge_compilation %>% 
    rename(from = hex_rowid_1, to = hex_rowid_2)
 
-edge_collection$from <- as.character(edge_collection$from)
+edge_compilation$from <- as.character(edge_compilation$from)
 
-edge_collection$to <- as.character(edge_collection$to)
+edge_compilation$to <- as.character(edge_compilation$to)
 
-duplicate_list <- st_equals(edge_collection, retain_unique = TRUE)
+duplicate_list <- st_equals(edge_compilation, retain_unique = TRUE)
 
-edge_collection <- edge_collection[-unlist(duplicate_list),]
+edge_compilation <- edge_compilation[-unlist(duplicate_list),]
 
-edge_collection <- edge_collection %>% rowid_to_column('unique_id')
+edge_compilation <- edge_compilation %>% mutate(eval_column = case_when(to == from ~ 'self', 
+                                                                        to > from ~ 'not-self',
+                                                                        to < from ~ 'not-self'))
+edge_compilation <- edge_compilation %>% filter(eval_column == 'not-self') %>% 
+  select(-eval_column)
 
-#write_sf(edge_collection, '/home/steven/Downloads/edge_collection.gpkg')
+
+edge_compilation <- edge_compilation %>% rowid_to_column('unique_id')
+
+write_sf(edge_compilation, 'outputs/network_components/edge_compilation_cleaned.gpkg')
 
 midpoint_generator <- function(row_subset) {
   
@@ -506,12 +512,32 @@ midpoint_generator <- function(row_subset) {
   
 }
 
+# Cognoscere
+
 plan(callr, workers = 20)
 options(future.globals.maxSize = 891289600)
 
-midpoint_collection <- future_map(midpoint_generator(1:518769)) %>% bind_rows()
+midpoint_collection <- future_map(midpoint_generator(1:250000)) %>% bind_rows()
 
+write_sf(midpoint_collection, 'outputs/network_components/midpoint_collection/midpoint_collection_1.gpkg')
 
+# Advesperascit
+
+plan(callr, workers = 12)
+options(future.globals.maxSize = 891289600)
+
+midpoint_collection <- future_map(midpoint_generator(250000:500000)) %>% bind_rows()
+
+write_sf(midpoint_collection, 'outputs/network_components/midpoint_collection/midpoint_collection_2.gpkg')
+
+# Florilegium
+
+plan(callr, workers = 8)
+options(future.globals.maxSize = 891289600)
+
+midpoint_collection <- future_map(midpoint_generator(500000:815410)) %>% bind_rows()
+
+write_sf(midpoint_collection, 'outputs/network_components/midpoint_collection/midpoint_collection_3.gpkg')
 
 
 ```
