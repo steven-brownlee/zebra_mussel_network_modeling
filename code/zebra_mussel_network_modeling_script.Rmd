@@ -446,7 +446,7 @@ for  (i in 40:80) {
 plan(callr, workers = 20)
 options(future.globals.maxSize = 891289600)
 
-for  (i in 80:120) {
+for  (i in 150:160) {
   ival = eval(i)
   edge_collection <- future_map(row_indices[ival], ~edge_generator(.x)) %>% bind_rows
   write_rds(edge_collection, paste0('/home/steven/Downloads/edge_collection_',
@@ -464,12 +464,53 @@ edge_compilation <- list.files('outputs/network_components/edge_folder/',
 edge_compilation <- lapply(edge_compilation, readRDS) %>% bind_rows()
 
 
+
 edge_compilation <- edge_compilation %>% 
 mutate(geometry = paste0('LINESTRING (', x_1, ' ', y_1, ', ', x_2, ' ', y_2, ')' ))
 
 edge_compilation <- edge_compilation %>% st_as_sf(wkt = 'geometry', crs = 'ESRI:102008')
 
-write_sf(edge_compilation, 'outputs/network_components/edge_collection.gpkg')
+
+edge_collection <-  edge_compilation %>% 
+   select(hex_rowid_1, hex_rowid_2) %>% 
+   rename(from = hex_rowid_1, to = hex_rowid_2)
+
+edge_collection$from <- as.character(edge_collection$from)
+
+edge_collection$to <- as.character(edge_collection$to)
+
+duplicate_list <- st_equals(edge_collection, retain_unique = TRUE)
+
+edge_collection <- edge_collection[-unlist(duplicate_list),]
+
+edge_collection <- edge_collection %>% rowid_to_column('unique_id')
+
+#write_sf(edge_collection, '/home/steven/Downloads/edge_collection.gpkg')
+
+midpoint_generator <- function(row_subset) {
+  
+  midpoint_collection <- tibble(id = numeric(),
+                    geom = st_sfc(crs = 'ESRI:102008'))
+  
+  for (i in row_subset) {
+    ival = eval(i)
+    int_filter <- edge_collection %>% filter(unique_id == ival)
+    int_midpoint <- st_sample(test, size = 1, type = 'regular') %>%
+      st_cast("POINT") %>% 
+      st_as_sf() %>% 
+      mutate(id = ival) %>% 
+      rename(geom = x)
+    midpoint_collection <- rbind(midpoint_collection, int_midpoint)
+  }
+  return(midpoint_collection)
+  
+}
+
+plan(callr, workers = 20)
+options(future.globals.maxSize = 891289600)
+
+midpoint_collection <- future_map(midpoint_generator(1:518769)) %>% bind_rows()
+
 
 
 
@@ -546,9 +587,6 @@ write_sf(origin_sample_complete, 'outputs/network_components/origin_collection.g
 ```
 
 ```{r}
-# nb: something wrong with hex id transposition, check
-
-#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 # Destination generation
 
@@ -562,64 +600,21 @@ write_sf(origin_sample_complete, 'outputs/network_components/origin_collection.g
 
 # Penticton: 43163
 
-edge_collection<- read_sf('outputs/network_components/edge_collection.gpkg') %>% 
-   select(hex_rowid_1, hex_rowid_2) %>% 
-   rename(from = hex_rowid_1, to = hex_rowid_2)
 
-edge_collection$from <- as.character(edge_collection$from)
-
-edge_collection$to <- as.character(edge_collection$to)
 
 node_collection <- read_sf('outputs/network_components/centroids.gpkg') %>% 
-  select(hex_rowid) %>% 
+  select(hex_rowid, surface_type, lanes, speed_limit) %>% 
   rename(index = hex_rowid)
 
-
-# Stopgap
-
-edge_collection_test <- edge_collection %>% select(geom)
-
-edge_collection_test <- distinct(edge_collection_test)
-
-edge_collection_test <- edge_collection_test %>% rowid_to_column('edge_id')
-
-test <- edge_collection_test %>% filter(edge_id == 238614)
-
-buff <- st_buffer(test, 20)
-
-int <- st_intersection(node_collection, buff) %>% select(index) %>% st_drop_geometry()
-
-nrow(int)
-
-
-
-edge_corrector <- function(target) {
-  
-  new_edges <- tibble(from = character(),
-                    to = character(),
-                    geom = st_sfc(crs = 'ESRI:102008'))
-  
-  for (i in target) {
-  ival <- eval(i)
-  edge_intermediate <- edge_collection_test %>% filter(edge_id == ival)
-  buff <- st_buffer(edge_intermediate, 20)
-  int <- st_intersection(node_collection, buff) %>% select(index) %>% 
-    st_drop_geometry() %>% 
-    deframe()
-  edge_intermediate <- edge_intermediate %>% mutate(from = as.character(int[1]), to = as.character(int[2]))
-  new_edges <- bind_rows(new_edges, edge_intermediate)
-    
-  }
-  
-  return(new_edges)
-}
-
-plan(callr, workers = 20)
-options(future.globals.maxSize = 891289600)
-
-corrected_edges <- future_map(2:518769, ~edge_corrector(.x)) %>% bind_rows()
+network <- sfnetwork(node_collection, edge_collection, node_key = 'index', 
+                     force = TRUE)
 
 ```
 
+# Network routing
+
+```{r}
+
+```
 
 
