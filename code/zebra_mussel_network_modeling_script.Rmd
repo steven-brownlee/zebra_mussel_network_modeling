@@ -500,12 +500,11 @@ midpoint_generator <- function(row_subset) {
   
   for (i in row_subset) {
     ival = eval(i)
-    int_filter <- edge_collection %>% filter(unique_id == ival)
-    int_midpoint <- st_sample(test, size = 1, type = 'regular') %>%
-      st_cast("POINT") %>% 
+    int_filter <- edge_compilation %>% filter(unique_id == ival)
+    int_midpoint <- suppressWarnings(st_centroid(int_filter)) %>%
       st_as_sf() %>% 
-      mutate(id = ival) %>% 
-      rename(geom = x)
+      select(geometry) %>% 
+      mutate(id = ival)
     midpoint_collection <- rbind(midpoint_collection, int_midpoint)
   }
   return(midpoint_collection)
@@ -517,7 +516,7 @@ midpoint_generator <- function(row_subset) {
 plan(callr, workers = 20)
 options(future.globals.maxSize = 891289600)
 
-midpoint_collection <- future_map(midpoint_generator(1:250000)) %>% bind_rows()
+midpoint_collection <- future_map(1:250000, ~midpoint_generator(.x)) %>% bind_rows()
 
 write_sf(midpoint_collection, 'outputs/network_components/midpoint_collection/midpoint_collection_1.gpkg')
 
@@ -539,6 +538,14 @@ midpoint_collection <- future_map(midpoint_generator(500000:815410)) %>% bind_ro
 
 write_sf(midpoint_collection, 'outputs/network_components/midpoint_collection/midpoint_collection_3.gpkg')
 
+mc_1 <- read_sf('outputs/network_components/midpoint_collection/midpoint_collection_1.gpkg')
+  
+mc_2 <- read_sf('outputs/network_components/midpoint_collection/midpoint_collection_2.gpkg')
+  
+mc_3 <- read_sf('outputs/network_components/midpoint_collection/midpoint_collection_3.gpkg')
+
+
+midpoint_combined <- bind_rows(mc_1, mc_2, mc_3)
 
 ```
 
