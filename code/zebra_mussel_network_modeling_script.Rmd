@@ -55,6 +55,7 @@ library(future.callr)
 library(purrr)
 library(furrr)
 library(progressr)
+library(stars)
 
 ```
 
@@ -91,27 +92,23 @@ qgis_bbox <- read_sf('processed/qgis_bbox.gpkg') %>%
 # Create buffers around ZM occurrences
 
 zm_10 <- st_buffer(zm_occurrences, dist = 10000) %>% st_union() %>% st_as_sf() %>% 
-  mutate(buffer_dist = '10 km')
+  mutate(buffer_dist = 10)
 
 zm_20 <- st_buffer(zm_occurrences, dist = 20000) %>% st_union() %>% st_as_sf() %>% 
-  mutate(buffer_dist = '20 km')
+  mutate(buffer_dist = 20)
 
 zm_30 <- st_buffer(zm_occurrences, dist = 30000) %>% st_union() %>% st_as_sf() %>% 
-  mutate(buffer_dist = '30 km')
+  mutate(buffer_dist = 30)
 
 zm_40 <- st_buffer(zm_occurrences, dist = 40000) %>% st_union() %>% st_as_sf() %>% 
-  mutate(buffer_dist = '40 km')
+  mutate(buffer_dist = 40)
 
 zm_50 <- st_buffer(zm_occurrences, dist = 50000) %>% st_union() %>% st_as_sf() %>% 
-  mutate(buffer_dist = '50 km')
+  mutate(buffer_dist = 50)
 
 zm_buffer_collected <- rbind(zm_50, zm_40, zm_30, zm_20, zm_10)
 
 rm(zm_50, zm_40, zm_30, zm_20, zm_10)
-
-zm_buffer_collected$buffer_dist <- factor(zm_buffer_collected$buffer_dist, levels = c('50 km', '40 km', '30 km', '20 km', '10 km'))
-
-zm_buffer_collected <- st_transform(zm_buffer_collected, crs = 4326)
 
 write_sf(zm_buffer_collected, 'processed/zm_buffer.gpkg')
 
@@ -826,17 +823,137 @@ options(future.globals.maxSize = 1.6e+10)
 
 route_collection <- future_map(1:10642, ~router(.x)) %>% bind_rows() %>% st_as_sf()
 
+group_1 <- c(1, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000)
+
+group_2 <- c(1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10495)
+
+for (i in 1:10) {
+  inside_index <- group_1[i]
+  outside_index <- group_2[i]
+  route_subset <- route_collection %>% 
+    filter(collection_id >= inside_index & collection_id < outside_index)
+  write_sf(route_subset, paste0('outputs/network_components/path_folder/summerland_paths/path_subset_', i, '.gpkg'))
+  print(paste('Completed:', i))
+}
+
 write_sf(route_collection, 'outputs/network_components/summerland_route_collection.gpkg')
 
+route_collection <- read_sf('outputs/network_components/summerland_route_collection.gpkg')
 
+route_collection_aspatial <- route_collection %>% st_drop_geometry()
 
+write_rds(route_collection_aspatial, 'outputs/network_components/route_collection_aspatial.rds')
+
+#route_1 <- route_collection %>% filter(path_id < 300)
+
+#write_sf(route_1, 'outputs/network_components/route_testbed.gpkg')
 
 
 ```
 
-# Network routing
+# Extract values from mussel buffer
 
 ```{r}
+
+zm_buffer <- read_sf('processed/zm_buffer.gpkg') %>% 
+  st_transform(crs = 'ESRI:102008')
+
+route_collection <- read_sf('outputs/network_components/summerland_route_collection.gpkg')
+
+route_collection <- route_collection %>% rowid_to_column('collection_id')
+
+zm_buffer_raster <- st_rasterize(zm_buffer)
+
+route_summarizer <- function(row_subset) {
+
+  route_summaries <- tibble(path_id = numeric(),
+                          origin = character(),
+                          destination = character(),
+                          route_max = numeric(),
+                          route_min = numeric(),
+                          route_avg = numeric(),
+                          route_sd = numeric(),
+                          prop_na = numeric(),
+                          sample_size = numeric(),
+                          length_path = numeric()
+  )
+                          
+  for (i in row_subset) {
+
+  ###
+  
+  ival  = eval(i)
+  r_subset <- route_collection %>% filter(collection_id == ival)
+  r_sample <- st_cast(r_subset, 'POINT')
+  r_extract_df <- st_extract(zm_buffer_raster, r_sample) %>%
+    st_drop_geometry()
+  r_extract_undf <- r_extract_df %>%
+    st_drop_geometry() %>% 
+    deframe() %>% 
+    na.omit()
+  r_max <- max(r_extract_undf)
+  r_avg <- mean(r_extract_undf)
+  r_min <- min(r_extract_undf)
+  r_sd <- st(r_extract_undf)
+  r_prop_na <- sum(is.na(r_extract_df$buffer_dist))
+  r_sample_size = nrow(r_extract_df)
+    r_dist <- st_length(r_subset) %>%
+    as.numeric() 
+  r_dist = r_dist*0.001
+
+  
+  ###
+  
+    route_summaries_int <- tibble(path_id = r_subset$path_id,
+                          origin = r_subset$origin,
+                          destination = r_subset$destination,
+                          route_max = r_max,
+                          route_min = r_min,
+                          route_avg = r_avg,
+                          route_sd = r_sd,
+                          prop_na = r_prop_na,
+                          sample_size = r_sample_size,
+                          length_path = r_dist,
+                          )
+  ###
+    
+  route_summaries <- bind_rows(route_summaries, route_summaries_int)
+}
+  return(route_summaries)
+
+}
+
+route_summaries_outer <- tibble(path_id = numeric(),
+                          origin = character(),
+                          destination = character(),
+                          route_max = numeric(),
+                          route_min = numeric(),
+                          route_avg = numeric(),
+                          route_sd = numeric(),
+                          prop_na = numeric(),
+                          sample_size = numeric(),
+                          length_path = numeric()
+                          )
+
+
+
+
+plan(callr, workers = 6)
+options(future.globals.maxSize = 1.6e+10)
+
+for (i in 1:10) {
+  ival = eval(i)
+  route_subset <- read_sf(paste0('outputs/network_components/path_folder/summerland_paths/path_subset_', i, '.gpkg'))
+  length_sample <- nrow(route_subset)
+  route_summary_part <- future_map(length_sample, ~route_summarizer(.x)) %>% bind_rows()
+  route_summaries_outer <- bind_rows(route_summaries_outer, route_summary_part)
+  print(paste('Completed:', i))
+}
+
+
+
+
+
 
 
 ```
