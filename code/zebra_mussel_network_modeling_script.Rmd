@@ -369,7 +369,7 @@ hex_centroids <- hexagon_grid %>% st_centroid() %>%
          y = sf::st_coordinates(.)[,2]) %>% 
   select(hex_rowid, surface_type, lanes, speed_limit, x, y, geom)
 
-write_sf(hex_centroids, 'outputs/network_components/centroids.gpkg')
+#write_sf(hex_centroids, 'outputs/network_components/centroids.gpkg')
 
 hex_centroids_aspatial <- hex_centroids %>% st_drop_geometry()
 
@@ -491,20 +491,29 @@ edge_compilation <- edge_compilation %>% filter(eval_column == 'not-self') %>%
 
 edge_compilation <- edge_compilation %>% rowid_to_column('unique_id')
 
-write_sf(edge_compilation, 'outputs/network_components/edge_compilation_cleaned.gpkg')
+#write_sf(edge_compilation, 'outputs/network_components/edge_compilation_cleaned.gpkg')
+
+edge_compilation <- read_sf('outputs/network_components/edge_compilation_cleaned.gpkg')
 
 midpoint_generator <- function(row_subset) {
   
-  midpoint_collection <- tibble(id = numeric(),
-                    geom = st_sfc(crs = 'ESRI:102008'))
+  midpoint_collection <- tibble(intermediate_id = numeric(),
+                                to = character(),
+                                x_2 = numeric(),
+                                y_2 = numeric(),
+                                from = character(),
+                                x_1 = numeric(),
+                                y_1 = numeric(),
+                                comb_id = character(),
+                                geom = st_sfc(crs = 'ESRI:102008'))
   
   for (i in row_subset) {
     ival = eval(i)
     int_filter <- edge_compilation %>% filter(unique_id == ival)
     int_midpoint <- suppressWarnings(st_centroid(int_filter)) %>%
       st_as_sf() %>% 
-      select(geometry) %>% 
-      mutate(id = ival)
+      mutate(intermediate_id = ival) %>% 
+      select(-unique_id)
     midpoint_collection <- rbind(midpoint_collection, int_midpoint)
   }
   return(midpoint_collection)
@@ -525,7 +534,7 @@ write_sf(midpoint_collection, 'outputs/network_components/midpoint_collection/mi
 plan(callr, workers = 12)
 options(future.globals.maxSize = 891289600)
 
-midpoint_collection <- future_map(midpoint_generator(250000:500000)) %>% bind_rows()
+midpoint_collection <- future_map(250000:500000, ~midpoint_generator(.x)) %>% bind_rows()
 
 write_sf(midpoint_collection, 'outputs/network_components/midpoint_collection/midpoint_collection_2.gpkg')
 
@@ -534,7 +543,7 @@ write_sf(midpoint_collection, 'outputs/network_components/midpoint_collection/mi
 plan(callr, workers = 8)
 options(future.globals.maxSize = 891289600)
 
-midpoint_collection <- future_map(midpoint_generator(500000:815410)) %>% bind_rows()
+midpoint_collection <- future_map(500000:815410, ~midpoint_generator(.x)) %>% bind_rows()
 
 write_sf(midpoint_collection, 'outputs/network_components/midpoint_collection/midpoint_collection_3.gpkg')
 
@@ -547,16 +556,121 @@ mc_3 <- read_sf('outputs/network_components/midpoint_collection/midpoint_collect
 
 midpoint_combined <- bind_rows(mc_1, mc_2, mc_3)
 
+
+mp_duplicate_list <- st_equals(midpoint_combined, retain_unique = TRUE)
+
+midpoint_combined  <- midpoint_combined[-unlist(mp_duplicate_list),] 
+
+midpoint_combined$hex_rowid <- 518770:1334179
+
+midpoint_combined <- midpoint_combined %>% rowid_to_column('midpoint_id') %>% 
+    mutate(midpoint_x = sf::st_coordinates(.)[,1],
+         midpoint_y = sf::st_coordinates(.)[,2]) 
+
+midpoint_aspatial <- midpoint_combined %>% st_drop_geometry()
+
+
+
+final_edge_generator <- function(row_subset) {
+  
+  final_nodes_template <- tibble(midpoint_x = numeric(),
+                      midpoint_y = numeric(),
+                      orig_x = numeric(),
+                      orig_y = numeric(),
+                      midpoint_id = numeric(),
+                      edge_pair_id = character()
+                      )
+  
+  for (i in row_subset) {
+  ival <- eval(i)
+  int_midpoint <- midpoint_aspatial %>% filter(midpoint_id == ival)
+  
+  midpoint_1 <- tibble(midpoint_x = int_midpoint$midpoint_x,
+                      midpoint_y = int_midpoint$midpoint_y,
+                      orig_x = int_midpoint$x_2,
+                      orig_y = int_midpoint$y_2,
+                      orig_id = int_midpoint$to,
+                      midpoint_id = int_midpoint$hex_rowid,
+                      edge_pair_id = paste0(as.character(int_midpoint$to), '_', 
+                                            as.character(int_midpoint$hex_rowid))
+                      )
+  
+  midpoint_2 <- tibble(midpoint_x = int_midpoint$midpoint_x,
+                      midpoint_y = int_midpoint$midpoint_y,
+                      orig_x = int_midpoint$x_1,
+                      orig_y = int_midpoint$y_1,
+                      orig_id = int_midpoint$from,
+                      midpoint_id = int_midpoint$hex_rowid,
+                      edge_pair_id = paste0(as.character(int_midpoint$from), '_', 
+                                            as.character(int_midpoint$hex_rowid))
+                      )
+  final_nodes_template <- bind_rows(final_nodes_template, midpoint_1, midpoint_2)
+}
+
+return(final_nodes_template)
+  
+}
+
+
+plan(callr, workers = 20)
+options(future.globals.maxSize = 891289600)
+
+final_edge_collection <- future_map(1:815410, ~final_edge_generator(.x)) %>% bind_rows()
+
+final_edge_collection_sf <- final_edge_collection %>% 
+mutate(geometry = paste0('LINESTRING (', midpoint_x, ' ', midpoint_y, ', ', orig_x, ' ', orig_y, ')' ))
+
+final_edge_collection_sf <- final_edge_collection_sf %>% st_as_sf(wkt = 'geometry', crs = 'ESRI:102008')
+
+centroid_data <- hex_centroids_aspatial %>% select(hex_rowid, surface_type, lanes, speed_limit)
+
+centroid_data$hex_rowid <- as.character(centroid_data$hex_rowid)
+
+##
+
+final_node_collection <- rbind(streamlined_centroid_data, midpoint_streamlined)
+
+final_edge_collection_joined <- left_join(final_edge_collection_sf, 
+                                          centroid_data, 
+                                          by = c('orig_id' = 'hex_rowid') )
+
+
+write_sf(final_edge_collection_joined, 'outputs/network_components/final_edge_collection.gpkg')
+
+final_edge_collection_sfnetwork <- final_edge_collection_joined %>% 
+  select(midpoint_id, orig_id, surface_type, lanes, speed_limit) %>% 
+  rename(from = orig_id, to = midpoint_id)
+
+write_sf(final_edge_collection_sfnetwork, 'outputs/network_components/edge_sfnetwork.gpkg')
+
+###
+
+midpoint_streamlined <- midpoint_combined %>% select('hex_rowid')
+
+midpoint_streamlined$hex_rowid <- as.character(midpoint_streamlined$hex_rowid)
+
+centroid_streamlined <- hex_centroids %>% select(hex_rowid)
+
+centroid_streamlined$hex_rowid <- as.character(centroid_streamlined$hex_rowid)
+
+final_node_collection <- bind_rows(centroid_streamlined, midpoint_streamlined)
+
+write_sf(final_node_collection, 'outputs/network_components/final_node_collection.gpkg')
+
+final_node_collection_sfnetwork <- final_node_collection %>% rename(index = hex_rowid)
+
+write_sf(final_node_collection_sfnetwork, 'outputs/network_components/node_sfnetwork.gpkg')
+
 ```
 
-# Point of origin generator
+# Point of origin and destination
 
 ```{r}
 
 canada_metro_areas <- read_sf('processed/canada_metro_areas.gpkg') %>% st_transform(crs = 'ESRI:102008')
 
 canada_filtered <- canada_metro_areas %>% select(CMANAME, PRNAME) %>%
-  rename(metro_name = PRNAME, prov_state_name = CMANAME) %>% 
+  rename(metro_name = CMANAME, prov_state_name = PRNAME) %>% 
   mutate(country = 'Canada')
 
 us_metro_areas <- read_sf('processed/us_metro_areas.gpkg') %>% 
@@ -564,7 +678,7 @@ us_metro_areas <- read_sf('processed/us_metro_areas.gpkg') %>%
 
 us_filtered <- us_metro_areas %>% select(NAME)
 
-hex_centroids <- read_sf('/home/steven/Downloads/centroids.gpkg')
+hex_centroids <- read_sf('outputs/network_components/centroids.gpkg')
 
 
 ###
@@ -616,37 +730,114 @@ origin_sample_complete <- origin_template %>% select(x, y, metro_id, metro_name,
   st_as_sf(coords = c('x', 'y'), crs = 'ESRI:102008')
 
 write_sf(origin_sample_complete, 'outputs/network_components/origin_collection.gpkg')
+
+# Destination
+
+
+dest_ids <- c(44296, 44199, 45796, 43087, 43163)
+  
+dest_names <- c('Kelowna', 'West Kelowna', 'Vernon', 'Summerland', 'Penticton')
+
+destination_template <- tibble(id = numeric(),
+                               name = character(),
+                               geom = st_sfc(crs = 'ESRI:102008'))
+
+for (i in 1:5) {
+  ival = eval(i)
+  dest_filtered <- final_node_collection_sfnetwork %>% filter(index == ival) %>% 
+    select(-index) %>% 
+    mutate(id = dest_ids[ival], name = dest_names[ival])
+  destination_template <- bind_rows(destination_template, dest_filtered)
+}
+
+write_sf(destination_template, 'outputs/network_components/destination_collection.gpkg')
   
 ```
 
+# Network traversal
+
 ```{r}
 
-# Destination generation
+node_sfnetwork <- read_sf('outputs/network_components/node_sfnetwork.gpkg')
 
-# Kelowna: 44296
+edge_sfnetwork <- read_sf('outputs/network_components/edge_sfnetwork.gpkg')
 
-# West Kelowna: 44199, 43678
+origins <- read_sf('outputs/network_components/origin_collection.gpkg')
 
-# Vernon: 45796
+destinations <- read_sf('outputs/network_components/destination_collection.gpkg')
 
-# Summerland: 43087
+###
 
-# Penticton: 43163
+origins_matched <- st_join(origins, node_sfnetwork) %>% 
+  rowid_to_column('origin_id')
+
+destinations_matched <- st_join(destinations, node_sfnetwork) %>% 
+  rowid_to_column('destination_id')
+
+
+network <- sfnetwork(node_sfnetwork, edge_sfnetwork,
+                     directed = FALSE,
+                     node_key = 'index',
+                     force = TRUE) %>% 
+   activate("edges") %>%
+  mutate(weight = edge_length())
+
+
+path_collection_template <- tibble(path_id = numeric(),
+                                   origin = character(),
+                          destination = character(),
+                          geom = st_sfc(crs = 'ESRI:102008'))
+
+edge_sfnetwork$to <- as.character(edge_sfnetwork$to)
+edge_sfnetwork$from <- as.character(edge_sfnetwork$from)
+
+
+router <- function(row_subset) {
+  for (i in row_subset) {
+  ival = eval(i)
+  int_origin <- origins_matched %>% filter(origin_id == ival)
+  int_origin_index <- int_origin$index
+  int_path <- suppressWarnings(st_network_paths(network, 
+                                                from = int_origin_index, 
+                                                to = 43087, 
+                                                weights = 'weight'))
+  if (length(unlist(int_path$node_paths)) > 0) {
+    int_nodes <- as_tibble(unlist(int_path$node_paths)) %>% 
+      rename(index = value)
+    int_nodes$index <- as.character(int_nodes$index)
+    int_node_spatial <- inner_join(node_sfnetwork, int_nodes, by = 'index')
+    test_edge_1 <- inner_join(edge_sfnetwork, int_nodes, by = c('to' = 'index'))
+    path_edges <- inner_join(test_edge_1, int_nodes, by = c('from' = 'index'))
+    path_edges <- path_edges %>% select(geom)
+    path_edges <- st_union(path_edges)
+    path_collection_int <- tibble(path_id = ival,
+                                origin = int_origin$metro_name,
+                          destination = 'Summerland',
+                          geom = path_edges)
+    path_collection_template <- bind_rows(path_collection_template, path_collection_int)
+  } 
+}
+  return(path_collection_template)
+}
+
+
+plan(callr, workers = 6)
+options(future.globals.maxSize = 1.6e+10)
+
+route_collection <- future_map(1:10642, ~router(.x)) %>% bind_rows() %>% st_as_sf()
+
+write_sf(route_collection, 'outputs/network_components/summerland_route_collection.gpkg')
 
 
 
-node_collection <- read_sf('outputs/network_components/centroids.gpkg') %>% 
-  select(hex_rowid, surface_type, lanes, speed_limit) %>% 
-  rename(index = hex_rowid)
 
-network <- sfnetwork(node_collection, edge_collection, node_key = 'index', 
-                     force = TRUE)
 
 ```
 
 # Network routing
 
 ```{r}
+
 
 ```
 
