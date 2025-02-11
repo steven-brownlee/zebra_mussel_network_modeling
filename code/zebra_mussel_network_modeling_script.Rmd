@@ -447,7 +447,8 @@ for  (i in 150:160) {
   ival = eval(i)
   edge_collection <- future_map(row_indices[ival], ~edge_generator(.x)) %>% bind_rows
   write_rds(edge_collection, paste0('/home/steven/Downloads/edge_collection_',
-                                   ival, '.rds'))
+                                   ival, '.rds')) 
+  
   print(paste('Completed:', ival))
 }
   
@@ -687,13 +688,18 @@ north_america_metros <- bind_rows(canada_filtered, us_filtered)
 
 north_america_metros <- north_america_metros %>% rowid_to_column('metro_id')
 
+```
+
+# Points of origin
+
+```{r}
+
 
 origin_template <- tibble(x = numeric(),
                           y = numeric(),
                          metro_id = numeric(),
                          metro_name = character(),
                          prov_state_name = character(),
-                         surface_type = character(),
                          country = character() )
 
 
@@ -728,28 +734,171 @@ origin_sample_complete <- origin_template %>% select(x, y, metro_id, metro_name,
 
 write_sf(origin_sample_complete, 'outputs/network_components/origin_collection.gpkg')
 
+```
+
+# Destinations, metro areas
+
+```{r}
+
 # Destination
 
 
-dest_ids <- c(44296, 44199, 45796, 43087, 43163)
+na_political_bound <- read_sf('downloads/political_boundaries/boundaries_p_2021_v3.shp') %>% 
+  st_transform(crs = 'ESRI:102008')
+
+bc_bound <- na_political_bound %>% 
+  filter(NAME_En == 'British Columbia')
+
+destination_list <- st_intersection(canada_metro_areas, bc_bound)
+
+destination_list <- destination_list %>% rename(metro_name = CMANAME) %>% 
+  select(metro_name) %>% 
+  filter(metro_name != 'Whitehorse') %>% 
+  rowid_to_column('destination_id')
+
+##
+
+destination_template <- tibble(x = numeric(),
+                          y = numeric(),
+                         destination_name = character(),
+                         geom = st_sfc(crs = 'ESRI:102008')
+                         ) %>% st_as_sf()
+
+
+for (i in 1:26) {
+  d_val <- eval(i)
   
-dest_names <- c('Kelowna', 'West Kelowna', 'Vernon', 'Summerland', 'Penticton')
-
-destination_template <- tibble(id = numeric(),
-                               name = character(),
-                               geom = st_sfc(crs = 'ESRI:102008'))
-
-for (i in 1:5) {
-  ival = eval(i)
-  dest_filtered <- final_node_collection_sfnetwork %>% filter(index == ival) %>% 
-    select(-index) %>% 
-    mutate(id = dest_ids[ival], name = dest_names[ival])
-  destination_template <- bind_rows(destination_template, dest_filtered)
+  destination_subset <- destination_list %>% filter(destination_id == d_val)
+  
+  destination_area <- as.numeric(st_area(destination_subset)/1000000)
+  
+  if (destination_area > 10) {
+  destination_sample_size = 10
+} else {
+  destination_sample_size = 5
+}
+ 
+  destination_sample <- st_sample(destination_subset, 
+                                  size = destination_sample_size) %>% 
+  st_cast("POINT") %>% 
+  st_as_sf() %>% 
+  rename(geom = x) %>% 
+  mutate(x = sf::st_coordinates(.)[,1],
+         y = sf::st_coordinates(.)[,2],
+         destination_name = destination_subset$metro_name
+         ) 
+  destination_template <- bind_rows(destination_template, destination_sample)
+  
+  print(paste('Completed:', i))
 }
 
-write_sf(destination_template, 'outputs/network_components/destination_collection.gpkg')
+destination_template <- destination_template %>% rowid_to_column('destination_id')
+
+
+write_sf(destination_template, 'outputs/network_components/destinations/metro/metro_destinations.gpkg')
   
+
 ```
+
+# Destinations, lakes
+
+```{r}
+cci_lakes <- read_sf('processed/cci_lakes.gpkg') %>% 
+  st_transform(crs = 'ESRI:102008')
+
+cci_lakes_subset <- cci_lakes %>% filter(id == 300000651 | id == 384 | 
+                                           id == 300008244| id == 300000579 |
+                                           id == 300006584 | id == 565 |
+                                           id == 501
+                                         )
+
+name_corrector <- tibble(id = c(384, 501, 565, 
+                                300000579, 300000651, 300006584,
+                                300008244),
+                         new_name = c('Babine', 'Stuart', 'Okanagan',
+                                      'Francois', 'Adams', 'Fraser',
+                                      'Cowichan'))
+
+cci_lakes_subset <- left_join(cci_lakes_subset, name_corrector, by = 'id') %>% 
+  select(new_name) %>% 
+  rename(lake_name = new_name)
+
+write_sf(cci_lakes_subset, 'processed/cci_lakes_sample.gpkg')
+
+cci_buffered_big <- st_buffer(cci_lakes_subset, dist = 5000)
+
+cci_buffered_small <- st_buffer(cci_lakes_subset, dist = 0.01)
+
+st_erase = function(x, y) st_difference(x, st_union(st_combine(y)))
+
+lake_destinations <- st_erase(cci_buffered_big, cci_buffered_small)
+
+lake_destinations <- lake_destinations %>% rowid_to_column('lake_id')
+
+###
+
+lake_destination_template <- tibble(x = numeric(),
+                          y = numeric(),
+                         destination_name = character(),
+                         geom = st_sfc(crs = 'ESRI:102008')
+                         ) %>% st_as_sf()
+
+for (i in 1:7) {
+   d_val <- eval(i)
+   destination_subset <- lake_destinations %>% filter(lake_id == d_val)
+   destination_sample <- st_sample(destination_subset, 
+                                  size = 10) %>% 
+     st_cast("POINT") %>% 
+     st_as_sf() %>% 
+     rename(geom = x) %>% mutate(x = sf::st_coordinates(.)[,1],
+         y = sf::st_coordinates(.)[,2],
+         destination_name = destination_subset$lake_name
+         ) 
+     lake_destination_template <- bind_rows(lake_destination_template, destination_sample)
+  
+  print(paste('Completed:', i))
+}
+
+lake_destination_template <- lake_destination_template %>% 
+  rowid_to_column('destination_id')
+
+write_sf(lake_destination_template, 'outputs/network_components/destinations/lake/lake_destinations.gpkg')
+
+```
+
+# Destinations, Okanagan
+
+```{r}
+
+cci_lakes_subset <- read_sf('processed/cci_lakes_sample.gpkg')
+
+okanagan <- cci_lakes_subset %>% filter(lake_name == 'Okanagan')
+
+okanagan_buffered_big <- st_buffer(okanagan, dist = 5000)
+
+okanagan_buffered_small <- st_buffer(okanagan, dist = 0.01)
+
+st_erase = function(x, y) st_difference(x, st_union(st_combine(y)))
+
+okanagan_template <- st_erase(okanagan_buffered_big, okanagan_buffered_small)
+
+okanagan_samples <- st_sample(okanagan_template, 
+                                  size = 20) %>% 
+     st_cast("POINT") %>% 
+     st_as_sf() %>% 
+     rename(geom = x) %>% mutate(x = sf::st_coordinates(.)[,1],
+         y = sf::st_coordinates(.)[,2],
+         destination_name = 'Okanagan'
+         ) 
+
+
+okanagan_samples <- okanagan_samples %>% 
+  rowid_to_column('destination_id')
+
+write_sf(okanagan_samples, 'outputs/network_components/destinations/okanagan/okanagan_destinations.gpkg')
+
+```
+
 
 # Network traversal
 
@@ -759,18 +908,13 @@ node_sfnetwork <- read_sf('outputs/network_components/node_sfnetwork.gpkg')
 
 edge_sfnetwork <- read_sf('outputs/network_components/edge_sfnetwork.gpkg')
 
-origins <- read_sf('outputs/network_components/origin_collection.gpkg')
-
-destinations <- read_sf('outputs/network_components/destination_collection.gpkg')
+origins <- read_sf('outputs/network_components/origin_collection.gpkg') %>% 
+  rowid_to_column('origin_id')
 
 ###
 
 origins_matched <- st_join(origins, node_sfnetwork) %>% 
   rowid_to_column('origin_id')
-
-destinations_matched <- st_join(destinations, node_sfnetwork) %>% 
-  rowid_to_column('destination_id')
-
 
 network <- sfnetwork(node_sfnetwork, edge_sfnetwork,
                      directed = FALSE,
@@ -779,24 +923,38 @@ network <- sfnetwork(node_sfnetwork, edge_sfnetwork,
    activate("edges") %>%
   mutate(weight = edge_length())
 
-
-path_collection_template <- tibble(path_id = numeric(),
-                                   origin = character(),
-                          destination = character(),
-                          geom = st_sfc(crs = 'ESRI:102008'))
-
 edge_sfnetwork$to <- as.character(edge_sfnetwork$to)
 edge_sfnetwork$from <- as.character(edge_sfnetwork$from)
 
+ int_path <- st_network_paths(network, 
+                              from = 228, 
+                              to = destination, 
+                              weights = 'weight')
+ 
+nodes <- as_tibble(unlist(int_path$node_paths)) %>% 
+      rename(index = value)
+int_nodes$index <- as.character(int_nodes$index)
+int_node_spatial <- inner_join(node_sfnetwork, int_nodes, by = 'index')
 
-router <- function(row_subset) {
+int_node_spatial <- int_node_spatial %>% rowid_to_column('node_index') %>% select(-index)
+
+r1 <- route_collection %>% filter(path_id == 783)
+
+r1 <- r1$geom
+
+r1_sample <- st_line_sample(r1, density = 2000)
+
+###
+
+router <- function(row_subset, destination) {
+  
   for (i in row_subset) {
   ival = eval(i)
   int_origin <- origins_matched %>% filter(origin_id == ival)
   int_origin_index <- int_origin$index
   int_path <- suppressWarnings(st_network_paths(network, 
                                                 from = int_origin_index, 
-                                                to = 43087, 
+                                                to = destination, 
                                                 weights = 'weight'))
   if (length(unlist(int_path$node_paths)) > 0) {
     int_nodes <- as_tibble(unlist(int_path$node_paths)) %>% 
@@ -809,23 +967,101 @@ router <- function(row_subset) {
     path_edges <- st_union(path_edges)
     path_collection_int <- tibble(path_id = ival,
                                 origin = int_origin$metro_name,
-                          destination = 'Summerland',
+                          destination = destination$destination_name,
                           geom = path_edges)
-    path_collection_template <- bind_rows(path_collection_template, path_collection_int)
+    inner_path_collection_template <- bind_rows(inner_path_collection_template, path_collection_int)
   } 
 }
   return(path_collection_template)
 }
 
+###
+
+```
+
+# Route generation, metros
+
+```{r}
+
+metro_dest <- read_sf('outputs/network_components/destinations/metro/metro_destinations.gpkg')
+
+for (i in 1:260) {
+  
+  
+}
 
 plan(callr, workers = 6)
 options(future.globals.maxSize = 1.6e+10)
 
+```
+
+
+# Route generation, lakes
+
+```{r}
+
+lake_dest <- read_sf('outputs/network_components/destinations/lake/lake_destinations.gpkg')
+
+outer_path_collection_template <- tibble(path_id = numeric(),
+                                   origin = character(),
+                          destination = character(),
+                          geom = st_sfc(crs = 'ESRI:102008'))
+
+plan(callr, workers = 6)
+options(future.globals.maxSize = 1.6e+10)
+
+for (i in 1:70) {
+  
+  d_val = eval(i)
+  
+  destination <- lake_dest %>% filter(destination_id == d_val)
+  
+  ###
+
+  inner_path_collection_template <- tibble(path_id = numeric(),
+                                   origin = character(),
+                          destination = character(),
+                          geom = st_sfc(crs = 'ESRI:102008'))
+  ###
+  
+  
+  lake_route_collection <- future_map(1:10642, 
+                                      ~router(.x, destination = destination)) %>% 
+    bind_rows() %>% 
+    st_as_sf()
+  
+  outer_path_collection_template <- bind_rows(outer_path_collection_template,
+                                              inner_path_collection_template)
+}
+
+
+
+```
+
+# Route generation, Okanagan
+
+```{r}
+
+ok_dest <- read_sf('outputs/network_components/destinations/okanagan/okanagan_destinations.gpkg')
+
+nrow(ok_dest)
+
+plan(callr, workers = 6)
+options(future.globals.maxSize = 1.6e+10)
+
+for (i in 1:20) {
+  
+}
+
+```
+
+
+```{r}
+
+
 route_collection <- future_map(1:10642, ~router(.x)) %>% bind_rows() %>% st_as_sf()
 
-group_1 <- c(1, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000)
-
-group_2 <- c(1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10495)
+test <- split(d, ceiling(seq_along(d)/1000))
 
 for (i in 1:10) {
   inside_index <- group_1[i]
@@ -850,6 +1086,8 @@ write_rds(route_collection_aspatial, 'outputs/network_components/route_collectio
 
 
 ```
+
+
 
 # Extract values from mussel buffer
 

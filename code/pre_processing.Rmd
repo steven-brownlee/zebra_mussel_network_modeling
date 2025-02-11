@@ -141,5 +141,13 @@ us_metro <- us_metro %>% st_transform(crs = 4326) %>% st_make_valid()
 
 write_sf(us_metro, 'processed/us_metro_areas.gpkg')
 
+# CCI Lakes
+
+cci_lakes <- read_sf('/mnt/023ede0b-f66f-4769-939d-421b38967538/common/thesis/ch1/env_data/cci_lakes/cci_auxiliary_data/lakescci_v2.0.2_data-availability.shp')
+
+cci_lakes <- cci_lakes %>% st_set_crs(4326) %>% st_make_valid()
+
+write_sf(cci_lakes, 'processed/cci_lakes.gpkg')
+
 ```
 
