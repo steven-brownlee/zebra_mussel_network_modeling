@@ -941,9 +941,6 @@ write_rds(network, 'outputs/network_components/sf_network.rds')
 
 ```{r}
 
-
-
-
 router <- function(row_subset, destination) {
   
   outer_template_table <- tibble(index = character(),
@@ -956,7 +953,6 @@ router <- function(row_subset, destination) {
   dest_row <- nrow(destination)
   
   for (i in row_subset) {
-   print(i) 
     
       int_origin <- origins_matched %>% filter(origin_id == i)
     
@@ -984,7 +980,6 @@ router <- function(row_subset, destination) {
      }
 
     outer_template_table <- bind_rows(outer_template_table, inner_template_table)
-    print(paste('Completed:', i))
   }
   
   return(outer_template_table)
@@ -1019,7 +1014,7 @@ node_aspatial <- node_sfnetwork %>% mutate(x = sf::st_coordinates(.)[,1],
 plan(callr, workers = 6)
 options(future.globals.maxSize = 1.6e+10)
 
-groups <- split(1:101612, ceiling(seq_along(1:101612)/25))
+groups <- split(1:10612, ceiling(seq_along(1:10612)/25))
 
 ###
 
@@ -1036,7 +1031,10 @@ for (x in 1:length(groups)) {
   metro_table <- future_map(int_vector, ~router(.x, destination = metro_dest)) %>% 
   bind_rows()
   
-  metro_template_table <- bind_rows(metro_template_table, metro_table)
+  metro_path <- paste('outputs/network_components/routes/metro/metro_route_', x, '.gpkg')
+  
+  write_rds(metro_table, metro_path)
+  
   print(paste('Completed:', x))
 }
 
@@ -1065,19 +1063,13 @@ node_aspatial <- node_sfnetwork %>% mutate(x = sf::st_coordinates(.)[,1],
 
 ###
 
-plan(callr, workers = 20)
+plan(callr, workers = 6)
 options(future.globals.maxSize = 1.6e+10)
 
-groups <- split(1:101612, ceiling(seq_along(1:101612)/150))
+groups <- split(1:10612, ceiling(seq_along(1:10612)/25))
 
 ###
 
-lake_template_table <- tibble(index = character(),
-                           destination_id = numeric(),
-                           origin_id = numeric(),
-                           node_position = numeric(),
-                           x = numeric(),
-                           y = numeric())
 
 for (x in 1:length(groups)) {
   
@@ -1086,7 +1078,9 @@ for (x in 1:length(groups)) {
   lake_table <- future_map(int_vector, ~router(.x, destination = lake_dest)) %>% 
   bind_rows()
   
-  lake_template_table <- bind_rows(lake_template_table, lake_table)
+  lake_path <- paste('outputs/network_components/routes/lake/lake_route_', x, '.gpkg')
+  
+  write_rds(lake_table, lake_path)
   print(paste('Completed:', x))
 }
 
@@ -1114,7 +1108,7 @@ node_aspatial <- node_sfnetwork %>% mutate(x = sf::st_coordinates(.)[,1],
 plan(callr, workers = 6)
 options(future.globals.maxSize = 1.6e+10)
 
-groups <- split(1:101612, ceiling(seq_along(1:101612)/5))
+groups <- split(1:10612, ceiling(seq_along(1:10612)/25))
 
 ###
 
@@ -1131,7 +1125,8 @@ for (x in 1:length(groups)) {
   ok_table <- future_map(int_vector, ~router(.x, destination = ok_dest)) %>% 
   bind_rows()
   
-  ok_template_table <- bind_rows(ok_template_table, ok_table)
+  ok_path <- paste('outputs/network_components/routes/okanagan/okanagan_route_', x, '.gpkg')
+  write_rds(ok_table, ok_path)
   print(paste('Completed:', x))
 }
 
