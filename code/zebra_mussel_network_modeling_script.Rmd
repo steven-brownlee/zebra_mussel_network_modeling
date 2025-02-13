@@ -1021,6 +1021,8 @@ network <- readRDS('outputs/network_components/sf_network.rds')
 
 edge_sfnetwork <- read_sf('outputs/network_components/edge_sfnetwork_routing.gpkg')
 
+node_sfnetwork <- read_sf('outputs/network_components/node_sfnetwork.gpkg')
+
 ###
 
 plan(callr, workers = 6)
@@ -1097,6 +1099,8 @@ network <- readRDS('outputs/network_components/sf_network.rds')
 
 edge_sfnetwork <- read_sf('outputs/network_components/edge_sfnetwork_routing.gpkg')
 
+node_sfnetwork <- read_sf('outputs/network_components/node_sfnetwork.gpkg')
+
 ###
 
 plan(callr, workers = 6)
@@ -1164,11 +1168,14 @@ print('~~~')
 ```{r}
 
 ok_dest <- read_sf('outputs/network_components/destinations/okanagan/okanagan_destinations.gpkg')
+
 origins_matched <- read_sf('outputs/network_components/origin_matched.gpkg')
 
 network <- readRDS('outputs/network_components/sf_network.rds')
 
 edge_sfnetwork <- read_sf('outputs/network_components/edge_sfnetwork_routing.gpkg')
+
+node_sfnetwork <- read_sf('outputs/network_components/node_sfnetwork.gpkg')
 
 ###
 
