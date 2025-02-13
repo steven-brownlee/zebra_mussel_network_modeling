@@ -1074,7 +1074,7 @@ for (i in 1:nrow(metro_dest)) {
     
   }
   
-  filename <- paste0('outputs/network_components/routes/metroanagan/metro_route_', i, '.gpkg')
+  filename <- paste0('outputs/network_components/routes/metro/metro_route_', i, '.gpkg')
   
   write_sf(outer_route_analysis_template, filename)
   
