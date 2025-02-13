@@ -937,71 +937,58 @@ write_rds(network, 'outputs/network_components/sf_network.rds')
 
 ```
 
-# Route point functions
+# Route point function
 
 ```{r}
+
+
+
+
 router <- function(row_subset, destination) {
   
-  inner_path_collection_template <- tibble(path_id = numeric(),
-                                origin = character(),
-                          destination = character(),
-                          geom = st_sfc(crs = 'ESRI:102008'))
+  outer_template_table <- tibble(index = character(),
+                           destination_id = numeric(),
+                           origin_id = numeric(),
+                           node_position = numeric(),
+                           x = numeric(),
+                           y = numeric())
   
+  dest_row <- nrow(destination)
   
   for (i in row_subset) {
-  ival = eval(i)
-  int_origin <- origins_matched %>% filter(origin_id == ival)
-  int_origin_index <- int_origin$index
-  int_path <- suppressWarnings(st_network_paths(network, 
-                                                from = int_origin_index, 
+   print(i) 
+    
+      int_origin <- origins_matched %>% filter(origin_id == i)
+    
+      inner_template_table <- tibble(index = character(),
+                           destination_id = numeric(),
+                           origin_id = numeric(),
+                           node_position = numeric(),
+                           x = numeric(),
+                           y = numeric())
+     
+     int_path <- suppressWarnings(st_network_paths(network, 
+                                                from = int_origin, 
                                                 to = destination, 
                                                 weights = 'weight'))
-  if (length(unlist(int_path$node_paths)) > 0) {
-    int_nodes <- as_tibble(unlist(int_path$node_paths)) %>% 
-      rename(index = value)
-    int_nodes$index <- as.character(int_nodes$index)
-    int_node_spatial <- inner_join(node_sfnetwork, int_nodes, by = 'index')
-    test_edge_1 <- inner_join(edge_sfnetwork, int_nodes, by = c('to' = 'index'))
-    path_edges <- inner_join(test_edge_1, int_nodes, by = c('from' = 'index'))
-    path_edges <- path_edges %>% select(geom)
-    path_edges <- st_union(path_edges)
-    path_collection_int <- tibble(path_id = ival,
-                                origin = int_origin$metro_name,
-                          destination = destination$destination_name,
-                          geom = path_edges)
-    inner_path_collection_template <- bind_rows(inner_path_collection_template, path_collection_int)
-  } 
-}
-  return(inner_path_collection_template)
-}
+    
+     for (j in 1:dest_row) {
+           int_path_tibble <- as_tibble(unlist(int_path[j,1])) %>% 
+             rename(index = value) %>% 
+             mutate(destination_id = j) %>% 
+             mutate(origin_id = int_origin$origin_id) %>% 
+             rowid_to_column('node_position')
+           int_path_tibble$index <- as.character(int_path_tibble$index)
+           suppressMessages(int_path_joined <- left_join(int_path_tibble, node_aspatial))
+           inner_template_table <- bind_rows(inner_template_table, int_path_joined)
+     }
 
-
-
-
-
-###
-
-route_tabulator <- function(row_subset, route_collection) {
-
-s_val <- eval(row_subset)
-
-eval_row <- route_collection %>% filter(row_counter == s_val)
-
-  suppressWarnings(
-  route_interior  <- eval_row %>% 
-  select(-row_counter) %>% 
-  st_cast('POINT') %>% 
-  rowid_to_column('route_index') %>% 
-  arrange(desc(route_index)) %>% 
-  rowid_to_column('route_index_fixed') %>% 
-  select(-route_index) %>% 
-  rename(route_index = route_index_fixed) %>%
-  mutate(path_id = eval_row$path_id,
-         origin = eval_row$origin,
-         destination = eval_row$destination)
-)
-
-return(route_interior)
+    outer_template_table <- bind_rows(outer_template_table, inner_template_table)
+    print(paste('Completed:', i))
+  }
+  
+  return(outer_template_table)
+  
 }
 
   
@@ -1019,9 +1006,13 @@ origins_matched <- read_sf('outputs/network_components/origin_matched.gpkg')
 
 network <- readRDS('outputs/network_components/sf_network.rds')
 
-edge_sfnetwork <- read_sf('outputs/network_components/edge_sfnetwork_routing.gpkg')
-
 node_sfnetwork <- read_sf('outputs/network_components/node_sfnetwork.gpkg')
+
+node_aspatial <- node_sfnetwork %>% mutate(x = sf::st_coordinates(.)[,1],
+         y = sf::st_coordinates(.)[,2],) %>% 
+  st_drop_geometry()
+
+
 
 ###
 
@@ -1032,55 +1023,24 @@ groups <- split(1:101612, ceiling(seq_along(1:101612)/25))
 
 ###
 
+metro_template_table <- tibble(index = character(),
+                           destination_id = numeric(),
+                           origin_id = numeric(),
+                           node_position = numeric(),
+                           x = numeric(),
+                           y = numeric())
 
-for (i in 1:nrow(metro_dest)) {
+for (x in 1:length(groups)) {
+  int_vector <- unlist(groups[x])
   
-  d_val = eval(i)
+  metro_table <- future_map(int_vector, ~router(.x, destination = metro_dest)) %>% 
+  bind_rows()
   
-  destination <- metro_dest %>% filter(destination_id == d_val)
-  
-  ###
-  
-  outer_route_analysis_template <- tibble(route_index = numeric(),
-                                  path_id = numeric(),
-                                  origin = character(),
-                                  destination = character(),
-                                  geom = st_sfc(crs = 'ESRI:102008')) %>% 
-  st_as_sf()
-  
-  
-  for (j in 1:length(groups)) {
-    
-  index <- unlist(groups[j])
-    
-  metro_route_collection <- future_map(index, 
-                                      ~router(.x, destination = destination)) %>% 
-    bind_rows() %>% 
-    st_as_sf() %>% 
-    rowid_to_column('row_counter')
-  
-
-  
-  metro_route_points <- future_map(1:nrow(metro_route_collection),
-                                  ~route_tabulator(.x,
-                                                   route_collection = 
-                                                     metro_route_collection)) %>% 
-    bind_rows() 
-  
-  outer_route_analysis_template <- bind_rows(outer_route_analysis_template, 
-                                             metro_route_points)
-  
-  print(paste('Completed interior group:', j, 'of', length(groups)))
-    
-  }
-  
-  filename <- paste0('outputs/network_components/routes/metro/metro_route_', i, '.gpkg')
-  
-  write_sf(outer_route_analysis_template, filename)
-  
-print(paste('Completed:', i, 'of', nrow(metro_dest) ))
-print('~~~')
+  metro_template_table <- bind_rows(metro_template_table, metro_table)
+  print(paste('Completed:', x))
 }
+
+
 
 
 
@@ -1097,68 +1057,38 @@ origins_matched <- read_sf('outputs/network_components/origin_matched.gpkg')
 
 network <- readRDS('outputs/network_components/sf_network.rds')
 
-edge_sfnetwork <- read_sf('outputs/network_components/edge_sfnetwork_routing.gpkg')
-
 node_sfnetwork <- read_sf('outputs/network_components/node_sfnetwork.gpkg')
 
+node_aspatial <- node_sfnetwork %>% mutate(x = sf::st_coordinates(.)[,1],
+         y = sf::st_coordinates(.)[,2],) %>% 
+  st_drop_geometry()
+
 ###
 
-plan(callr, workers = 6)
+plan(callr, workers = 20)
 options(future.globals.maxSize = 1.6e+10)
 
-groups <- split(1:101612, ceiling(seq_along(1:101612)/25))
+groups <- split(1:101612, ceiling(seq_along(1:101612)/150))
 
 ###
 
-for (i in 1:nrow(lake_dest)) {
-  
-  d_val = eval(i)
-  
-  destination <- lake_dest %>% filter(destination_id == d_val)
-  
-  ###
-  
-  outer_route_analysis_template <- tibble(route_index = numeric(),
-                                  path_id = numeric(),
-                                  origin = character(),
-                                  destination = character(),
-                                  geom = st_sfc(crs = 'ESRI:102008')) %>% 
-  st_as_sf()
-  
-  
-  for (j in 1:length(groups)) {
-    
-  index <- unlist(groups[j])
-    
-  lake_route_collection <- future_map(index, 
-                                      ~router(.x, destination = destination)) %>% 
-    bind_rows() %>% 
-    st_as_sf() %>% 
-    rowid_to_column('row_counter')
-  
+lake_template_table <- tibble(index = character(),
+                           destination_id = numeric(),
+                           origin_id = numeric(),
+                           node_position = numeric(),
+                           x = numeric(),
+                           y = numeric())
 
+for (x in 1:length(groups)) {
   
-  lake_route_points <- future_map(1:nrow(lake_route_collection),
-                                  ~route_tabulator(.x,
-                                                   route_collection = 
-                                                     lake_route_collection)) %>% 
-    bind_rows() 
+  int_vector <- unlist(groups[x])
   
-  outer_route_analysis_template <- bind_rows(outer_route_analysis_template, 
-                                             lake_route_points)
+  lake_table <- future_map(int_vector, ~router(.x, destination = lake_dest)) %>% 
+  bind_rows()
   
-  print(paste('Completed interior group:', j, 'of', length(groups)))
-    
-  }
-  
-  filename <- paste0('outputs/network_components/routes/lake/lake_route_', i, '.gpkg')
-  
-  write_sf(outer_route_analysis_template, filename)
-  
-print(paste('Completed:', i, 'of', nrow(lake_dest) ))
-print('~~~')
+  lake_template_table <- bind_rows(lake_template_table, lake_table)
+  print(paste('Completed:', x))
 }
-
 
 
 ```
@@ -1173,69 +1103,37 @@ origins_matched <- read_sf('outputs/network_components/origin_matched.gpkg')
 
 network <- readRDS('outputs/network_components/sf_network.rds')
 
-edge_sfnetwork <- read_sf('outputs/network_components/edge_sfnetwork_routing.gpkg')
-
 node_sfnetwork <- read_sf('outputs/network_components/node_sfnetwork.gpkg')
+
+node_aspatial <- node_sfnetwork %>% mutate(x = sf::st_coordinates(.)[,1],
+         y = sf::st_coordinates(.)[,2],) %>% 
+  st_drop_geometry()
 
 ###
 
 plan(callr, workers = 6)
 options(future.globals.maxSize = 1.6e+10)
 
-groups <- split(1:101612, ceiling(seq_along(1:101612)/25))
+groups <- split(1:101612, ceiling(seq_along(1:101612)/5))
 
 ###
 
+ok_template_table <- tibble(index = character(),
+                           destination_id = numeric(),
+                           origin_id = numeric(),
+                           node_position = numeric(),
+                           x = numeric(),
+                           y = numeric())
 
-for (i in 1:nrow(ok_dest)) {
+for (x in 1:length(groups)) {
+  int_vector <- unlist(groups[x])
   
-  d_val = eval(i)
+  ok_table <- future_map(int_vector, ~router(.x, destination = ok_dest)) %>% 
+  bind_rows()
   
-  destination <- ok_dest %>% filter(destination_id == d_val)
-  
-  ###
-  
-  outer_route_analysis_template <- tibble(route_index = numeric(),
-                                  path_id = numeric(),
-                                  origin = character(),
-                                  destination = character(),
-                                  geom = st_sfc(crs = 'ESRI:102008')) %>% 
-  st_as_sf()
-  
-  
-  for (j in 1:length(groups)) {
-    
-  index <- unlist(groups[j])
-    
-  ok_route_collection <- future_map(index, 
-                                      ~router(.x, destination = destination)) %>% 
-    bind_rows() %>% 
-    st_as_sf() %>% 
-    rowid_to_column('row_counter')
-  
-
-  
-  ok_route_points <- future_map(1:nrow(ok_route_collection),
-                                  ~route_tabulator(.x,
-                                                   route_collection = 
-                                                     ok_route_collection)) %>% 
-    bind_rows() 
-  
-  outer_route_analysis_template <- bind_rows(outer_route_analysis_template, 
-                                             ok_route_points)
-  
-  print(paste('Completed interior group:', j, 'of', length(groups)))
-    
-  }
-  
-  filename <- paste0('outputs/network_components/routes/okanagan/ok_route_', i, '.gpkg')
-  
-  write_sf(outer_route_analysis_template, filename)
-  
-print(paste('Completed:', i, 'of', nrow(ok_dest) ))
-print('~~~')
+  ok_template_table <- bind_rows(ok_template_table, ok_table)
+  print(paste('Completed:', x))
 }
-
 
 
 ```
