@@ -1018,20 +1018,13 @@ groups <- split(1:10612, ceiling(seq_along(1:10612)/25))
 
 ###
 
-metro_template_table <- tibble(index = character(),
-                           destination_id = numeric(),
-                           origin_id = numeric(),
-                           node_position = numeric(),
-                           x = numeric(),
-                           y = numeric())
-
 for (x in 1:length(groups)) {
   int_vector <- unlist(groups[x])
   
   metro_table <- future_map(int_vector, ~router(.x, destination = metro_dest)) %>% 
   bind_rows()
   
-  metro_path <- paste('outputs/network_components/routes/metro/metro_route_', x, '.gpkg')
+  metro_path <- paste('outputs/network_components/routes/metro/metro_route_', x, '.rds')
   
   write_rds(metro_table, metro_path)
   
@@ -1078,7 +1071,7 @@ for (x in 1:length(groups)) {
   lake_table <- future_map(int_vector, ~router(.x, destination = lake_dest)) %>% 
   bind_rows()
   
-  lake_path <- paste('outputs/network_components/routes/lake/lake_route_', x, '.gpkg')
+  lake_path <- paste0('outputs/network_components/routes/lake/lake_route_', x, '.rds')
   
   write_rds(lake_table, lake_path)
   print(paste('Completed:', x))
@@ -1112,173 +1105,152 @@ groups <- split(1:10612, ceiling(seq_along(1:10612)/25))
 
 ###
 
-ok_template_table <- tibble(index = character(),
-                           destination_id = numeric(),
-                           origin_id = numeric(),
-                           node_position = numeric(),
-                           x = numeric(),
-                           y = numeric())
-
 for (x in 1:length(groups)) {
   int_vector <- unlist(groups[x])
   
   ok_table <- future_map(int_vector, ~router(.x, destination = ok_dest)) %>% 
   bind_rows()
   
-  ok_path <- paste('outputs/network_components/routes/okanagan/okanagan_route_', x, '.gpkg')
+  ok_path <- paste0('outputs/network_components/routes/okanagan/okanagan_route_', x, '.rds')
   write_rds(ok_table, ok_path)
   print(paste('Completed:', x))
+  gc()
 }
 
 
 ```
 
 
-```{r}
-
-
-route_collection <- future_map(1:10642, ~router(.x)) %>% bind_rows() %>% st_as_sf()
-
-test <- split(d, ceiling(seq_along(d)/1000))
-
-for (i in 1:10) {
-  inside_index <- group_1[i]
-  outside_index <- group_2[i]
-  route_subset <- route_collection %>% 
-    filter(collection_id >= inside_index & collection_id < outside_index)
-  write_sf(route_subset, paste0('outputs/network_components/path_folder/summerland_paths/path_subset_', i, '.gpkg'))
-  print(paste('Completed:', i))
-}
-
-write_sf(route_collection, 'outputs/network_components/summerland_route_collection.gpkg')
-
-route_collection <- read_sf('outputs/network_components/summerland_route_collection.gpkg')
-
-route_collection_aspatial <- route_collection %>% st_drop_geometry()
-
-write_rds(route_collection_aspatial, 'outputs/network_components/route_collection_aspatial.rds')
-
-#route_1 <- route_collection %>% filter(path_id < 300)
-
-#write_sf(route_1, 'outputs/network_components/route_testbed.gpkg')
-
-
-```
-
-
-
-# Extract values from mussel buffer
+# Add auxiliary data and extract mussel data
 
 ```{r}
+#
 
 zm_buffer <- read_sf('processed/zm_buffer.gpkg') %>% 
   st_transform(crs = 'ESRI:102008')
 
-route_collection <- read_sf('outputs/network_components/summerland_route_collection.gpkg')
-
-route_collection <- route_collection %>% rowid_to_column('collection_id')
-
 zm_buffer_raster <- st_rasterize(zm_buffer)
 
-route_summarizer <- function(row_subset) {
+#
 
-  route_summaries <- tibble(path_id = numeric(),
-                          origin = character(),
-                          destination = character(),
-                          route_max = numeric(),
-                          route_min = numeric(),
-                          route_avg = numeric(),
-                          route_sd = numeric(),
-                          prop_na = numeric(),
-                          sample_size = numeric(),
-                          length_path = numeric()
-  )
-                          
-  for (i in row_subset) {
+okanagan_routes <- list.files('outputs/network_components/routes/okanagan/', 
+                            pattern = '*.rds',
+                            full.names = TRUE,
+                            recursive = TRUE)
 
-  ###
-  
-  ival  = eval(i)
-  r_subset <- route_collection %>% filter(collection_id == ival)
-  r_sample <- st_cast(r_subset, 'POINT')
-  r_extract_df <- st_extract(zm_buffer_raster, r_sample) %>%
-    st_drop_geometry()
-  r_extract_undf <- r_extract_df %>%
-    st_drop_geometry() %>% 
-    deframe() %>% 
-    na.omit()
-  r_max <- max(r_extract_undf)
-  r_avg <- mean(r_extract_undf)
-  r_min <- min(r_extract_undf)
-  r_sd <- st(r_extract_undf)
-  r_prop_na <- sum(is.na(r_extract_df$buffer_dist))
-  r_sample_size = nrow(r_extract_df)
-    r_dist <- st_length(r_subset) %>%
-    as.numeric() 
-  r_dist = r_dist*0.001
+lake_routes <- list.files('outputs/network_components/routes/lakes/', 
+                            pattern = '*.rds',
+                            full.names = TRUE,
+                            recursive = TRUE)
 
+metro_routes <- list.files('outputs/network_components/routes/lakes/', 
+                            pattern = '*.rds',
+                            full.names = TRUE,
+                            recursive = TRUE)
+
+#
+
+origins_matched <- read_sf('outputs/network_components/origin_matched.gpkg')
+
+origins_filtered <- origins_matched %>% select(origin_id, metro_id, metro_name,
+                                               prov_state_name, country) %>% 
+  st_drop_geometry()
+
+
+#
+
+spatializer <- function(route_list, suffix) {
+
+for (i in 1:length(route_list)) {
   
-  ###
+  ival = eval(i)
   
-    route_summaries_int <- tibble(path_id = r_subset$path_id,
-                          origin = r_subset$origin,
-                          destination = r_subset$destination,
-                          route_max = r_max,
-                          route_min = r_min,
-                          route_avg = r_avg,
-                          route_sd = r_sd,
-                          prop_na = r_prop_na,
-                          sample_size = r_sample_size,
-                          length_path = r_dist,
-                          )
-  ###
+  file_name <- route_list[ival]
+  
+  file_number <- str_extract(file_name, '(?<=_route_).*') %>% 
+    str_remove('.rds.*')
+  
+  interior_route <- read_rds(route_list[ival]) %>% 
+    left_join(origins_filtered, 
+              by = 'origin_id') %>% 
+    rowid_to_column('interior_index')
+  
+  if (nrow(interior_route > 0)) {
     
-  route_summaries <- bind_rows(route_summaries, route_summaries_int)
+    interior_route$group <- as.numeric(cut_number(interior_route$interior_index, 10))
+  
+  #
+  
+  interior_route_table <- tibble(index = character(),
+                               destination_id = numeric(),
+                               origin_id = numeric(),
+                               node_position = numeric(),
+                               x = numeric(),
+                               y = numeric(),
+                               metro_id = numeric(),
+                               metro_name = character(),
+                               prov_state_name = character(),
+                               country = character())
+  #
+  
+  for (j in 1:10) {
+    
+    j_val <- eval(j)
+    
+    interior_route_part <- interior_route %>% filter(group == j_val) 
+   
+     interior_route_unique_loc <- interior_route_part %>% 
+       select(x, y) %>% 
+       st_as_sf(coords = c('x', 'y'), 
+             crs = 'ESRI:102008') %>% 
+       distinct()
+     
+    interior_route_part <- interior_route_part %>% 
+       st_as_sf(coords = c('x', 'y'), 
+             crs = 'ESRI:102008')
+      
+    extract_vals <- st_extract(zm_buffer_raster, interior_route_unique_loc) 
+    
+    interior_route_part <- st_join(interior_route_part, extract_vals)
+    
+    interior_route_part <- interior_route_part %>% mutate(x = sf::st_coordinates(.)[,1],
+         y = sf::st_coordinates(.)[,2]) %>% 
+      st_drop_geometry() %>% select(-interior_index, -group)
+    
+    interior_route_table <- bind_rows(interior_route_table, interior_route_part)
+    
+  }
+
+  int_path <- paste0('outputs/network_components/routes_compiled_spatial/',
+                     suffix, file_number, '.rds')
+  
+  write_rds(interior_route_table, int_path)
+  
+  return(print(paste('Completed:', file_number)))
+    
+  } else {
+    return(print(paste('No data for', file_number, 'skipping!')))
+  }
+  
 }
-  return(route_summaries)
 
 }
 
-route_summaries_outer <- tibble(path_id = numeric(),
-                          origin = character(),
-                          destination = character(),
-                          route_max = numeric(),
-                          route_min = numeric(),
-                          route_avg = numeric(),
-                          route_sd = numeric(),
-                          prop_na = numeric(),
-                          sample_size = numeric(),
-                          length_path = numeric()
-                          )
+###
 
-
-
-
-plan(callr, workers = 6)
+plan(callr, workers = 12)
 options(future.globals.maxSize = 1.6e+10)
 
-for (i in 1:10) {
-  ival = eval(i)
-  route_subset <- read_sf(paste0('outputs/network_components/path_folder/summerland_paths/path_subset_', i, '.gpkg'))
-  length_sample <- nrow(route_subset)
-  route_summary_part <- future_map(length_sample, ~route_summarizer(.x)) %>% bind_rows()
-  route_summaries_outer <- bind_rows(route_summaries_outer, route_summary_part)
-  print(paste('Completed:', i))
-}
+###
 
+future_map(okanagan_routes, ~spatializer(.x,
+                                    suffix = 'okanagan_'))
 
+future_map(lake_routes, ~spatializer(.x,
+                                    suffix = 'lake_'))
 
-
-
+future_map(metro_routes, ~spatializer(.x,
+                                    suffix = 'metro_'))
 
 
 ```
-
-```{r}
-
-
-
-
-
-```
-
