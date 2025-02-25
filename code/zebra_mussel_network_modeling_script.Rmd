@@ -1219,31 +1219,45 @@ okanagan_files <- list.files('outputs/network_components/routes_compiled_spatial
                             full.names = TRUE,
                             recursive = TRUE) 
 
-pt_template <- tibble(x = numeric(),
-                   y = numeric()
-)
-
 for (i in 1:length(okanagan_files)) {
   ival = eval(i)
   intermediate <- okanagan_files[ival]
   intermediate <- read_rds(intermediate)
-  intermediate <- intermediate %>% select(x,)
-  pt_template <- bind_rows(pt_template, intermediate)
+  intermediate <- intermediate %>% select(x, y)
+  intermediate <- intermediate %>%
+    st_as_sf(coords = c('x', 'y'), 
+             crs = st_crs('ESRI:102008'))
+  pathname <- paste0('side_analyses/raster_generation/point_collection/pt_subset_', ival, '.gpkg')
+  write_sf(intermediate, pathname)
   print(paste('Completed:', ival))
 }
 
-grid <- st_make_grid(qgis_bbox, cellsize = 500, 
-                     what = 'polygons', square = TRUE)  %>% 
-  st_as_sf() %>% 
-  st_transform(crs = 'ESRI:102008') %>% 
-  mutate(dummy_var = 1) %>% 
-  st_rasterize()
 
-write_stars(grid, 'processed/template_grid.tif')
+overlay_grid <- read_sf('processed/2km_hexagon_grid.gpkg')%>% 
+  rowid_to_column('hex_id')
 
-grid_clipped <- st_crop(grid, land)
+hex_id_template <- overlay_grid %>% st_drop_geometry()
 
-write_stars(grid_clipped, 'processed/template_grid_clipped.tif')
+
+okanagan_spatial_files <- list.files('side_analyses/raster_generation/point_collection/', 
+                            pattern = '*.gpkg',
+                            full.names = TRUE,
+                            recursive = TRUE) 
+
+for (i in 1:length(okanagan_spatial_files)) {
+  ival = eval(i)
+  intermediate <- read_sf(okanagan_spatial_files[ival]) %>% 
+    mutate(count_number = 1)
+  count_name <- paste0('count_', ival)
+  overlay_hex <- st_intersection(intermediate, overlay_grid) %>% 
+    group_by(hex_id) %>% 
+    count() %>% 
+    st_drop_geometry() %>% 
+    rename(!!count_name := n) 
+  hex_id_template <- left_join(hex_id_template, overlay_hex, by = 'hex_id')
+  print(paste('Completed:', ival))
+}
+
 
 ```
 
