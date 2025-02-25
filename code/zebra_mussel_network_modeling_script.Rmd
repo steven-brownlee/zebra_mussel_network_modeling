@@ -56,7 +56,8 @@ library(purrr)
 library(furrr)
 library(progressr)
 library(stars)
-
+library(paletteer)
+library(ggnewscale)
 ```
 
 # Import shapefiles
@@ -1120,137 +1121,141 @@ for (x in 1:length(groups)) {
 
 ```
 
-
-# Add auxiliary data and extract mussel data
+# Summarize route data
 
 ```{r}
-#
 
-zm_buffer <- read_sf('processed/zm_buffer.gpkg') %>% 
-  st_transform(crs = 'ESRI:102008')
-
-zm_buffer_raster <- st_rasterize(zm_buffer)
-
-#
-
-okanagan_routes <- list.files('outputs/network_components/routes/okanagan/', 
-                            pattern = '*.rds',
+okanagan_files <- list.files('outputs/network_components/routes_compiled_spatial/', 
+                            pattern = '*okanagan',
                             full.names = TRUE,
-                            recursive = TRUE)
+                            recursive = TRUE) 
 
-lake_routes <- list.files('outputs/network_components/routes/lakes/', 
-                            pattern = '*.rds',
-                            full.names = TRUE,
-                            recursive = TRUE)
+template <- tibble(index = character(),
+                            destination_id = numeric(),
+                            origin_id = numeric(),
+                            node_position = numeric(),
+                            x = numeric(),
+                            y = numeric(),
+                    metro_id = numeric(),
+                    metro_name = character(),
+                    prov_state_name = character(),
+                    country = character(),
+                    buffer_dist = numeric()
+                    )
 
-metro_routes <- list.files('outputs/network_components/routes/lakes/', 
-                            pattern = '*.rds',
-                            full.names = TRUE,
-                            recursive = TRUE)
-
-#
-
-origins_matched <- read_sf('outputs/network_components/origin_matched.gpkg')
-
-origins_filtered <- origins_matched %>% select(origin_id, metro_id, metro_name,
-                                               prov_state_name, country) %>% 
-  st_drop_geometry()
-
-
-#
-
-spatializer <- function(route_list, suffix) {
-
-for (i in 1:length(route_list)) {
-  
+for (i in 1:length(okanagan_files)) {
   ival = eval(i)
-  
-  file_name <- route_list[ival]
-  
-  file_number <- str_extract(file_name, '(?<=_route_).*') %>% 
-    str_remove('.rds.*')
-  
-  interior_route <- read_rds(route_list[ival]) %>% 
-    left_join(origins_filtered, 
-              by = 'origin_id') %>% 
-    rowid_to_column('interior_index')
-  
-  if (nrow(interior_route > 0)) {
-    
-    interior_route$group <- as.numeric(cut_number(interior_route$interior_index, 10))
-  
-  #
-  
-  interior_route_table <- tibble(index = character(),
-                               destination_id = numeric(),
-                               origin_id = numeric(),
-                               node_position = numeric(),
-                               x = numeric(),
-                               y = numeric(),
-                               metro_id = numeric(),
-                               metro_name = character(),
-                               prov_state_name = character(),
-                               country = character())
-  #
-  
-  for (j in 1:10) {
-    
-    j_val <- eval(j)
-    
-    interior_route_part <- interior_route %>% filter(group == j_val) 
-   
-     interior_route_unique_loc <- interior_route_part %>% 
-       select(x, y) %>% 
-       st_as_sf(coords = c('x', 'y'), 
-             crs = 'ESRI:102008') %>% 
-       distinct()
-     
-    interior_route_part <- interior_route_part %>% 
-       st_as_sf(coords = c('x', 'y'), 
-             crs = 'ESRI:102008')
-      
-    extract_vals <- st_extract(zm_buffer_raster, interior_route_unique_loc) 
-    
-    interior_route_part <- st_join(interior_route_part, extract_vals)
-    
-    interior_route_part <- interior_route_part %>% mutate(x = sf::st_coordinates(.)[,1],
-         y = sf::st_coordinates(.)[,2]) %>% 
-      st_drop_geometry() %>% select(-interior_index, -group)
-    
-    interior_route_table <- bind_rows(interior_route_table, interior_route_part)
-    
-  }
-
-  int_path <- paste0('outputs/network_components/routes_compiled_spatial/',
-                     suffix, file_number, '.rds')
-  
-  write_rds(interior_route_table, int_path)
-  
-  return(print(paste('Completed:', file_number)))
-    
-  } else {
-    return(print(paste('No data for', file_number, 'skipping!')))
-  }
-  
+  intermediate <- okanagan_files[ival]
+  intermediate <- read_rds(intermediate)
+  intermediate <- intermediate %>% filter(destination_id == 1)
+  template <- bind_rows(template, intermediate)
+  print(paste('Completed:', ival))
 }
 
+test_fraction <- template %>% filter(destination_id == 1)
+
+
+test_grouped <- test_fraction  %>% group_by(origin_id) %>% 
+  arrange(desc(node_position)) %>% 
+  rowid_to_column('route_index') %>% 
+  mutate(origin_id_fixed = cur_group_id()) %>% 
+  ungroup() %>% 
+group_by(origin_id_fixed)
+
+test_grouped$origin_id_fixed <- as.character(test_grouped$origin_id_fixed)
+
+test_grouped <- test_grouped %>% filter(origin_id_fixed < 20)
+
+test_group_line_1 <- summarize(test_grouped, route_index = min(route_index))
+
+test_group_line_2 <- summarize(test_grouped, route_index = max(route_index))
+
+test_group_line <- bind_rows(test_group_line_1, test_group_line_2) %>% 
+  group_by(origin_id_fixed)
+
+filtered <- test_grouped %>% ungroup() %>% group_by(origin_id_fixed, metro_name) %>% 
+  summarize()
+
+test_group_line <- left_join(test_group_line, filtered)
+
+test_grouped <- test_grouped %>% drop_na()
+
+slice_example <- ggplot() +  
+  geom_line(test_group_line, mapping = aes(x = route_index, y = origin_id_fixed, 
+                                           colour = metro_name),
+            alpha = 0.7, linewidth = 0.75) +
+ paletteer::scale_color_paletteer_d("fishualize::Oncorhynchus_gorbuscha") +
+    guides(colour = guide_legend('Origin city')) +
+  new_scale_color() +
+  geom_point(test_grouped, mapping = aes(x = route_index, y = origin_id_fixed,
+                                        colour = buffer_dist),
+             position = position_dodge(0.5)) +
+    ylab('Origin ID') +
+  xlab('Route index') +
+  scale_colour_paletteer_c("ggthemes::Sunset-Sunrise Diverging",
+                na.value = 'grey80',
+                direction = -1) +
+  guides(colour = guide_legend('Distance \n to zebra mussel \n infestation')) +
+  theme_classic(base_family = extrafont::choose_font('Source Code Pro'), 
+                base_size = 12) 
+
+slice_example
+
+ggsave('figures/meeting_figures/feb_27_2024/slice_example.png', 
+       width = 9, 
+       height = 12, 
+       units = 'in')
+
+
+```
+
+# Raster gen  
+
+```{r}
+
+
+okanagan_files <- list.files('outputs/network_components/routes_compiled_spatial/', 
+                            pattern = '*okanagan',
+                            full.names = TRUE,
+                            recursive = TRUE) 
+
+pt_template <- tibble(x = numeric(),
+                   y = numeric()
+)
+
+for (i in 1:length(okanagan_files)) {
+  ival = eval(i)
+  intermediate <- okanagan_files[ival]
+  intermediate <- read_rds(intermediate)
+  intermediate <- intermediate %>% select(x,)
+  pt_template <- bind_rows(pt_template, intermediate)
+  print(paste('Completed:', ival))
 }
 
-###
+grid <- st_make_grid(qgis_bbox, cellsize = 500, 
+                     what = 'polygons', square = TRUE)  %>% 
+  st_as_sf() %>% 
+  st_transform(crs = 'ESRI:102008') %>% 
+  mutate(dummy_var = 1) %>% 
+  st_rasterize()
 
-plan(callr, workers = 12)
-options(future.globals.maxSize = 1.6e+10)
+write_stars(grid, 'processed/template_grid.tif')
 
-###
+grid_clipped <- st_crop(grid, land)
 
-future_map(okanagan_routes, ~spatializer(.x,
-                                    suffix = 'okanagan_'))
+write_stars(grid_clipped, 'processed/template_grid_clipped.tif')
 
-future_map(lake_routes, ~spatializer(.x,
-                                    suffix = 'lake_'))
+```
 
-future_map(metro_routes, ~spatializer(.x,
-                                    suffix = 'metro_'))
+
+```{r}
+
+# Exposure metrics:
+
+# Cumulative exposures - # of exposure events in each bracket/number of points
+
+# Average exposure distance - of exposure events, what is average distance
+
 
 
 ```
