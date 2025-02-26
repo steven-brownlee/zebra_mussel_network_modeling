@@ -1249,13 +1249,16 @@ for (i in 1:length(okanagan_spatial_files)) {
   intermediate <- read_sf(okanagan_spatial_files[ival]) %>% 
     mutate(count_number = 1)
   count_name <- paste0('count_', ival)
-  overlay_hex <- st_intersection(intermediate, overlay_grid) %>% 
+  suppressWarnings(overlay_hex <- st_intersection(intermediate, overlay_grid) %>% 
     group_by(hex_id) %>% 
     count() %>% 
     st_drop_geometry() %>% 
-    rename(!!count_name := n) 
-  hex_id_template <- left_join(hex_id_template, overlay_hex, by = 'hex_id')
+    rename(!!count_name := n)) 
+  pathname <- paste0('side_analyses/raster_generation/hex_joined/hex_joined_', ival, '.rds')
+  write_rds(overlay_hex, pathname)
   print(paste('Completed:', ival))
+  rm(intermediate)
+  gc()
 }
 
 
