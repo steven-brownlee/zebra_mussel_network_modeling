@@ -58,6 +58,7 @@ library(progressr)
 library(stars)
 library(paletteer)
 library(ggnewscale)
+library(terra)
 ```
 
 # Import shapefiles
@@ -1118,7 +1119,6 @@ for (x in 1:length(groups)) {
   gc()
 }
 
-
 ```
 
 # Summarize route data
@@ -1209,6 +1209,88 @@ ggsave('figures/meeting_figures/feb_27_2024/slice_example.png',
 
 ```
 
+
+# route data part 2
+
+```{r}
+
+
+okanagan_files <- list.files('outputs/network_components/routes_compiled_spatial/', 
+                            pattern = '*okanagan',
+                            full.names = TRUE,
+                            recursive = TRUE) 
+
+outer_template <- tibble(destination_id = numeric(),
+                         origin_id = numeric(),
+                         node_position = numeric(),
+                         metro_id = numeric(),
+                         metro_name = character(),
+                         prov_state_name = character(),
+                         country = character(),
+                         buffer_dist = numeric(),
+                         non_na_count = numeric(),
+                         na_count = numeric(),
+                         sum_obs = numeric(),
+                         mean_buff_dist = numeric(),
+                         sd_buffer_dist = numeric(),
+                         scaled_exposure = numeric(),
+                         rough_distance_km = numeric())
+
+for (i in 1:length(okanagan_files)) {
+  
+  ival = eval(i)
+  
+  origin_file <- read_rds(okanagan_files[ival]) %>%
+    select(-x, -y, -index)
+  
+  de_duplicated <- origin_file %>% 
+  filter(!duplicated(paste0(pmax(destination_id, origin_id), 
+                            pmin(destination_id, origin_id)))) %>% 
+    select(-buffer_dist)
+  
+  observations <- origin_file %>% group_by(destination_id, origin_id) %>% 
+  summarise(sum_obs = n())
+  
+  dat_frame <- origin_file %>% drop_na() %>% 
+    group_by(destination_id, origin_id) %>% 
+    count(buffer_dist) %>% 
+    summarize(non_na_count = sum(n))
+  
+  na_frame <- origin_file %>% 
+    group_by(destination_id, origin_id) %>%
+    count(buffer_dist) %>% 
+    filter(is.na(buffer_dist)) %>% 
+    select(-buffer_dist) %>% 
+    rename(na_count = n)
+  
+  sum_stats <- origin_file %>% 
+    group_by(destination_id, origin_id) %>%
+    drop_na() %>% 
+    summarize(mean_buff_dist = mean(buffer_dist), sd_buffer_dist = sd(buffer_dist))
+  
+  template <- left_join(de_duplicated, dat_frame, by = c('destination_id', 'origin_id'))
+  
+  template <- left_join(template, na_frame, by = c('destination_id', 'origin_id'),
+                      keep = FALSE)
+  template <- left_join(template, observations, by = c('destination_id', 'origin_id'),
+                      keep = FALSE)
+  template <- left_join(template, sum_stats, by = c('destination_id', 'origin_id'),
+                      keep = FALSE)
+  
+  data_sheet <- template %>% mutate(scaled_exposure =  non_na_count/sum_obs,
+                                  rough_distance_km = sum_obs*2)
+  
+  outer_template <- bind_rows(outer_template, data_sheet)
+  
+  print(paste('Completed:', ival))
+}
+
+
+
+```
+
+
+
 # Raster gen  
 
 ```{r}
@@ -1218,6 +1300,15 @@ okanagan_files <- list.files('outputs/network_components/routes_compiled_spatial
                             pattern = '*okanagan',
                             full.names = TRUE,
                             recursive = TRUE) 
+
+land <- read_sf('processed/shared_north_america_coastline.gpkg') %>% 
+  st_transform(crs = 'ESRI:102008') %>% vect() %>% 
+  rast(res = 2000)
+
+
+
+
+
 
 for (i in 1:length(okanagan_files)) {
   ival = eval(i)
@@ -1236,7 +1327,12 @@ for (i in 1:length(okanagan_files)) {
 overlay_grid <- read_sf('processed/2km_hexagon_grid.gpkg')%>% 
   rowid_to_column('hex_id')
 
+overlay_grid <- overlay_grid %>% mutate(x = sf::st_coordinates(.)[,1],
+         y = sf::st_coordinates(.)[,2])
+
 hex_id_template <- overlay_grid %>% st_drop_geometry()
+
+write_rds(hex_id_template, 'side_analyses/raster_generation/auxiliary_files/hex_id_template.rds')
 
 
 okanagan_spatial_files <- list.files('side_analyses/raster_generation/point_collection/', 
@@ -1261,6 +1357,61 @@ for (i in 1:length(okanagan_spatial_files)) {
   gc()
 }
 
+
+
+
+
+hex_files <- list.files('side_analyses/raster_generation/hex_joined/', 
+                            pattern = '*.rds',
+                            full.names = TRUE,
+                            recursive = TRUE) 
+
+hex_id_template <- read_rds('side_analyses/raster_generation/auxiliary_files/hex_id_template.rds')
+
+
+start <- c(1, 25, 50, 75, 100, 125, 150, 175, 200, 
+           225, 250, 275, 300, 325, 350, 375, 400)
+
+end <- c(25, 50, 75, 100, 125, 150, 175, 200, 
+         225, 250, 275, 300, 325, 350, 375, 400, 422)
+
+for (j in 1:17) {
+  j_val <- eval(j)
+  start_eval <- start[j_val]
+  end_eval <- end[j_val]
+  file_filtered <- hex_files[start_eval:end_eval]
+  print(paste('Starting group:', j_val))
+  
+  hex_id_template <- read_rds('side_analyses/raster_generation/auxiliary_files/hex_id_template.rds')
+  
+  for (i in 1:length(file_filtered)) {
+    ival = eval(i)
+    intermediate <- read_rds(file_filtered[ival])
+    hex_id_template <- left_join(hex_id_template, intermediate, by = 'hex_id')
+    print(paste('Completed:', ival))
+}
+  filename <- paste0('side_analyses/raster_generation/hex_collated/collated_', j_val, '.rds')
+  
+  write_rds(hex_id_template, filename)
+  
+  print(paste('Completed group:', j_val))
+  
+  rm(hex_id_template)
+  gc()
+  
+}
+
+
+collate_list <- list.files('side_analyses/raster_generation/hex_collated/', 
+                            pattern = '*.rds',
+                            full.names = TRUE,
+                            recursive = TRUE) 
+
+
+test <- read_rds(collate_list[1]) %>% 
+  replace(is.na(.), 0) %>% transform(hex_id = as.character(hex_id)) %>% 
+  mutate(total_count = rowSums(across(where(is.numeric)), na.rm=TRUE)) %>% 
+  select(hex_id, total_count)
 
 ```
 
