@@ -85,34 +85,32 @@ usdot_road_network <- read_sf('processed/usdot_road_network.gpkg')%>%
 qgis_bbox <- read_sf('processed/qgis_bbox.gpkg') %>% 
   st_transform(crs = 'ESRI:102008')
 
+north_america_template_raster <- read_stars('processed/north_america_template_raster.tif')
+
 ```
 
 
 # Pre-processing
 
 ```{r}
-# Create buffers around ZM occurrences
 
-zm_10 <- st_buffer(zm_occurrences, dist = 10000) %>% st_union() %>% st_as_sf() %>% 
-  mutate(buffer_dist = 10)
+# Generate Euclidean distance surface from mussel infestation sites
 
-zm_20 <- st_buffer(zm_occurrences, dist = 20000) %>% st_union() %>% st_as_sf() %>% 
-  mutate(buffer_dist = 20)
+land_vect <- land %>% vect()
 
-zm_30 <- st_buffer(zm_occurrences, dist = 30000) %>% st_union() %>% st_as_sf() %>% 
-  mutate(buffer_dist = 30)
 
-zm_40 <- st_buffer(zm_occurrences, dist = 40000) %>% st_union() %>% st_as_sf() %>% 
-  mutate(buffer_dist = 40)
+zm_occ <- zm_occurrences %>% mutate(occ_val = 1) %>% select(occ_val) %>% 
+  vect()
 
-zm_50 <- st_buffer(zm_occurrences, dist = 50000) %>% st_union() %>% st_as_sf() %>% 
-  mutate(buffer_dist = 50)
+template_rast <- north_america_template_raster %>% rast()
 
-zm_buffer_collected <- rbind(zm_50, zm_40, zm_30, zm_20, zm_10)
+test_rast <- rasterize(zm_occ_raster, template_rast, field = 'occ_val') 
 
-rm(zm_50, zm_40, zm_30, zm_20, zm_10)
+euclidean_distance <- terra::distance(test_rast)
 
-write_sf(zm_buffer_collected, 'processed/zm_buffer.gpkg')
+euclidean_distance <- mask(euclidean_distance, mask = land_vect)
+
+writeRaster(distance_test, 'processed/euclidean_distance_from_zm.tif')
 
 # Merge US and Canada metro areas
 
@@ -484,7 +482,7 @@ edge_compilation <- edge_compilation[-unlist(duplicate_list),]
 
 edge_compilation <- edge_compilation %>% mutate(eval_column = case_when(to == from ~ 'self', 
                                                                         to > from ~ 'not-self',
-                                                                        to < from ~ 'not-self'))
+                                                             fe           to < from ~ 'not-self'))
 edge_compilation <- edge_compilation %>% filter(eval_column == 'not-self') %>% 
   select(-eval_column)
 
@@ -1123,6 +1121,23 @@ for (x in 1:length(groups)) {
 
 # Summarize route data
 
+# Route risk metrics
+
+1.) Point of origin exposure
+
+2.) Exposure along route
+
+3.) Distance between last exposure and destination
+
+```{r}
+
+
+
+```
+
+
+
+
 ```{r}
 
 okanagan_files <- list.files('outputs/network_components/routes_compiled_spatial/', 
@@ -1210,7 +1225,14 @@ ggsave('figures/meeting_figures/feb_27_2024/slice_example.png',
 ```
 
 
-# route data part 2
+```{r}
+
+test <- readRDS(okanagan_files[54])
+
+```
+
+
+# Summary figures
 
 ```{r}
 
@@ -1301,13 +1323,101 @@ okanagan_files <- list.files('outputs/network_components/routes_compiled_spatial
                             full.names = TRUE,
                             recursive = TRUE) 
 
-land <- read_sf('processed/shared_north_america_coastline.gpkg') %>% 
-  st_transform(crs = 'ESRI:102008') %>% vect() %>% 
-  rast(res = 2000)
+north_america_template_raster <- read_stars('processed/north_america_template_raster.tif')
+
+template_rast <- north_america_template_raster %>% rast()
+
+for (i in 1:length(okanagan_files)) {
+  ival = eval(i)
+  intermediate <- okanagan_files[ival]
+  intermediate <- read_rds(intermediate)
+  intermediate <- intermediate %>% select(x, y)
+  intermediate <- intermediate %>% st_as_sf(coords = c('x', 'y'), 
+             crs = st_crs('ESRI:102008')) %>% vect()
+  
+  intermediate_rast <- rasterize(intermediate, template_rast, fun = 'count')
+  
+  filename <- paste0('side_analyses/raster_generation/intermediate_rasters/accumulation_raster_', ival,
+                     '.tif')
+  writeRaster(intermediate_rast, filename)
+  print(paste('Completed:', ival, 'of', length(okanagan_files)))
+}
 
 
 
 
+accumulation_files <- list.files('side_analyses/raster_generation/intermediate_rasters/', 
+                            pattern = '*.tif',
+                            full.names = TRUE,
+                            recursive = TRUE)
+
+test_1 <- read_stars(accumulation_files[54])
+
+test_2 <- read_stars(accumulation_files[55])
+
+comb <- test_1 + test_2
+
+template_rast_combine <- north_america_template_raster %>%
+  mutate(count = 0) %>% 
+  select(count) %>% 
+  rast()
+
+
+for (i in 1:length(accumulation_files)) {
+    ival <- eval(i)
+    intermediate <- rast(accumulation_files[ival])
+    template_rast_combine <- terra::`add<-`(template_rast_combine, intermediate)
+    print(paste('Completed:', ival, 'of', length(accumulation_files)))
+}
+
+
+writeRaster(template_rast_co)
+
+
+test <- as_tibble(template_rast_combine)
+
+
+for (i in 1:length(accumulation_files)) {
+    ival <- eval(i)
+    intermediate <- rast(accumulation_files[ival])
+    print(intermediate)
+}
+
+
+inner <- c(1, 50, 75, 100, 125, 150, 175, 200, 225, 250, 275, 300, 325, 350, 375, 400)
+outer <- c(50, 75, 100, 125, 150, 175, 200, 225, 250, 275, 300, 325, 350, 375, 400, 422)
+
+for (i in 1:16) {
+  ival <- eval(i)
+  subgroup <- accumulation_files[inner[i]:outer[i]]
+  
+  template_rast_combine <- north_america_template_raster %>%
+  mutate(count = 0) %>% 
+  select(count)
+  
+  for (j in 1:length(subgroup)) {
+  jval <- eval(j)
+  accumulation_files[ival]
+  var_name <- str_sub(subgroup[ival], 55, 90)
+  intermediate <- read_stars(accumulation_files[ival])
+  template_rast_combine <- template_rast_combine + intermediate
+  
+  }
+  filename = paste0('side_analyses/raster_generation/combined_rasters/combined_rast_',
+                    ival, '.tif')
+  write_stars(template_rast_combine, filename)
+  print(paste('Completed:', ival, 'of', length(subgroup)))
+  gc()
+  
+}
+
+
+
+
+
+
+
+test_rast <- rasterize(outer_template, template_rast, fun = 'count')
 
 
 for (i in 1:length(okanagan_files)) {
