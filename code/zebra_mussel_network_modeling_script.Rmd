@@ -1307,6 +1307,71 @@ for (i in 1:length(okanagan_files)) {
   print(paste('Completed:', ival))
 }
 
+write_rds(outer_template, 'outputs/analysis/okanagan_route_data.rds')
+
+
+demonstration_filter <- outer_template %>% filter(destination_id == 14)
+
+origin_collection <- read_sf('outputs/network_components/origin_matched.gpkg')
+
+demonstration_spatial <- right_join(origin_collection, demonstration_filter, 
+                                    by = 'origin_id', keep = FALSE)
+
+write_sf(demonstration_spatial, 'outputs/analysis/okanagan_origins.gpkg')
+
+
+metro_centroids <- st_centroid(north_america_metros)%>% 
+  mutate(x = sf::st_coordinates(.)[,1],
+         y = sf::st_coordinates(.)[,2]) %>% 
+  st_drop_geometry()
+  
+
+
+demonstration_spatial_cities <- demonstration_spatial %>% group_by(metro_name.x) %>% 
+  summarize(mean_exposure = mean(scaled_exposure),
+            sd_exposure = sd(scaled_exposure)) %>% 
+  replace_na(list(mean_exposure = 0, sd_exposure = 0)) %>% 
+  rename(metro_name = metro_name.x) %>% 
+  left_join(metro_centroids, by = 'metro_name')
+
+  
+
+city_list <- ggplot() + geom_point(demonstration_spatial_cities, mapping = aes(x = metro_id, 
+                                                        y = mean_exposure, 
+                                                        colour = mean_exposure)) +
+  paletteer::scale_color_paletteer_c("ggthemes::Orange-Gold", direction = -1) +
+      ylab('Mean exposure') +
+  xlab('Cities') +
+  guides(colour = guide_legend('Exposure index')) +
+  theme_classic(base_family = extrafont::choose_font('Source Code Pro'), 
+                base_size = 12) 
+
+city_list
+
+
+west_east <- ggplot() + geom_point(demonstration_spatial_cities, mapping = aes(x = x, 
+                                                        y = mean_exposure, 
+                                                        colour = mean_exposure)) +
+paletteer::scale_color_paletteer_c("ggthemes::Orange-Gold", direction = -1) +
+  ylab('Mean exposure') +
+  xlab('West-East') +
+  guides(colour = guide_legend('Exposure index')) +
+  theme_classic(base_family = extrafont::choose_font('Source Code Pro'), 
+                base_size = 12) 
+
+west_east
+
+south_north <- ggplot() + geom_point(demonstration_spatial_cities, mapping = aes(x = y, 
+                                                        y = mean_exposure, 
+                                                        colour = mean_exposure)) +
+  paletteer::scale_color_paletteer_c("ggthemes::Orange-Gold", direction = -1) +
+  ylab('Mean exposure') +
+  xlab('South-North') +
+  guides(colour = guide_legend('Exposure index')) +
+  theme_classic(base_family = extrafont::choose_font('Source Code Pro'), 
+                base_size = 12) 
+
+south_north
 
 
 ```
