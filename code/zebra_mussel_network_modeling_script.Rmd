@@ -986,6 +986,58 @@ router <- function(row_subset, destination) {
   
 }
 
+
+spatializer <- function(table, prefix, dist_raster, origins) {
+      
+      num_groups = 20
+      
+      table_groups <- table %>%
+        group_by((row_number()-1) %/% (n()/num_groups)) %>%
+        nest %>% pull(data)
+      
+      
+      final_template <- tibble(destination_id = numeric(),
+                         origin_id = numeric(),
+                         node_position = numeric(),
+                         metro_id = numeric(),
+                         metro_name = character(),
+                         prov_state_name = character(),
+                         country = character(),
+                         buffer_dist = numeric(),
+                         geom = st_sfc(crs = 'ESRI:102008')) %>% 
+        st_as_sf()
+      
+      
+      for (j in 1:20) {
+        
+        j_val = eval(j)
+        
+        interior_selection <- table_groups[[j_val]] %>% select(-index)
+        
+        interior_joined <- left_join(interior_selection, origins, 
+                               by = 'origin_id') %>% select(-index) %>% 
+          st_as_sf(coords = c('x', 'y'), 
+             crs = st_crs('ESRI:102008'))
+        
+        interior_extraction <- st_extract(dist_raster, interior_joined,
+                                    FUN = 'mean') %>% 
+          distinct()
+        
+        interior_final <- st_join(interior_joined, interior_extraction)
+        
+
+        
+        final_template <- rbind(final_template, interior_final)
+}
+      
+      
+      path <- paste0('outputs/network_components/routes/', eval(prefix), 
+      '/', eval(prefix), '_route_', x, '.gpkg') 
+      write_sf(final_template, path)
+      
+      return(print(paste('Completed:', x)))
+}
+  
   
 ```
 
@@ -1007,7 +1059,7 @@ node_aspatial <- node_sfnetwork %>% mutate(x = sf::st_coordinates(.)[,1],
          y = sf::st_coordinates(.)[,2],) %>% 
   st_drop_geometry()
 
-
+distance_raster <- read_stars('processed/euclidean_distance_from_zm.tif')
 
 ###
 
@@ -1024,11 +1076,13 @@ for (x in 1:length(groups)) {
   metro_table <- future_map(int_vector, ~router(.x, destination = metro_dest)) %>% 
   bind_rows()
   
-  metro_path <- paste('outputs/network_components/routes/metro/metro_route_', x, '.rds')
+  if (nrow(ok_table > 0)) {
+      spatializer(table = metro_table, prefix = 'metro', dist_raster = distance_raster,
+              origins = origins_matched)
+  } else {
+    print(paste0('No data for ', x, ', skipping!'))
+  }
   
-  write_rds(metro_table, metro_path)
-  
-  print(paste('Completed:', x))
 }
 
 
@@ -1054,6 +1108,8 @@ node_aspatial <- node_sfnetwork %>% mutate(x = sf::st_coordinates(.)[,1],
          y = sf::st_coordinates(.)[,2],) %>% 
   st_drop_geometry()
 
+distance_raster <- read_stars('processed/euclidean_distance_from_zm.tif')
+
 ###
 
 plan(callr, workers = 6)
@@ -1071,10 +1127,14 @@ for (x in 1:length(groups)) {
   lake_table <- future_map(int_vector, ~router(.x, destination = lake_dest)) %>% 
   bind_rows()
   
-  lake_path <- paste0('outputs/network_components/routes/lake/lake_route_', x, '.rds')
+  if (nrow(ok_table > 0)) {
+      spatializer(table = lake_table, prefix = 'lake', dist_raster = distance_raster,
+              origins = origins_matched)
+  } else {
+    print(paste0('No data for ', x, ', skipping!'))
+  }
   
-  write_rds(lake_table, lake_path)
-  print(paste('Completed:', x))
+  
 }
 
 
@@ -1096,6 +1156,8 @@ node_aspatial <- node_sfnetwork %>% mutate(x = sf::st_coordinates(.)[,1],
          y = sf::st_coordinates(.)[,2],) %>% 
   st_drop_geometry()
 
+distance_raster <- read_stars('processed/euclidean_distance_from_zm.tif')
+
 ###
 
 plan(callr, workers = 6)
@@ -1111,9 +1173,13 @@ for (x in 1:length(groups)) {
   ok_table <- future_map(int_vector, ~router(.x, destination = ok_dest)) %>% 
   bind_rows()
   
-  ok_path <- paste0('outputs/network_components/routes/okanagan/okanagan_route_', x, '.rds')
-  write_rds(ok_table, ok_path)
-  print(paste('Completed:', x))
+  if (nrow(ok_table > 0)) {
+      spatializer(table = ok_table, prefix = 'okanagan', dist_raster = distance_raster,
+              origins = origins_matched)
+  } else {
+    print(paste0('No data for ', x, ', skipping!'))
+  }
+  
   gc()
 }
 
