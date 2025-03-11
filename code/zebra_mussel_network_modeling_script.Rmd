@@ -987,9 +987,10 @@ router <- function(row_subset, destination) {
 }
 
 
-spatializer <- function(table, prefix, dist_raster, origins) {
+spatializer <- function(table, prefix, dist_raster, origins,
+                        group_num) {
       
-      num_groups = 20
+      num_groups = group_num
       
       table_groups <- table %>%
         group_by((row_number()-1) %/% (n()/num_groups)) %>%
@@ -1076,9 +1077,12 @@ for (x in 1:length(groups)) {
   metro_table <- future_map(int_vector, ~router(.x, destination = metro_dest)) %>% 
   bind_rows()
   
-  if (nrow(ok_table > 0)) {
-      spatializer(table = metro_table, prefix = 'metro', dist_raster = distance_raster,
-              origins = origins_matched)
+  if (nrow(lake_table > 0)) {
+      spatializer(table = metro_table, 
+                  prefix = 'metro', 
+                  dist_raster = distance_raster,
+                  origins = origins_matched,
+                  group_num = 30)
   } else {
     print(paste0('No data for ', x, ', skipping!'))
   }
@@ -1127,9 +1131,12 @@ for (x in 1:length(groups)) {
   lake_table <- future_map(int_vector, ~router(.x, destination = lake_dest)) %>% 
   bind_rows()
   
-  if (nrow(ok_table > 0)) {
-      spatializer(table = lake_table, prefix = 'lake', dist_raster = distance_raster,
-              origins = origins_matched)
+  if (nrow(lake_table > 0)) {
+      spatializer(table = lake_table, 
+                  prefix = 'lake', 
+                  dist_raster = distance_raster,
+                  origins = origins_matched,
+                  group_num = 30)
   } else {
     print(paste0('No data for ', x, ', skipping!'))
   }
@@ -1174,8 +1181,11 @@ for (x in 1:length(groups)) {
   bind_rows()
   
   if (nrow(ok_table > 0)) {
-      spatializer(table = ok_table, prefix = 'okanagan', dist_raster = distance_raster,
-              origins = origins_matched)
+      spatializer(table = ok_table, 
+                  prefix = 'okanagan', 
+                  dist_raster = distance_raster,
+                  origins = origins_matched,
+                  group_num = 30)
   } else {
     print(paste0('No data for ', x, ', skipping!'))
   }
