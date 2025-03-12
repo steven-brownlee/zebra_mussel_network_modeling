@@ -1070,7 +1070,8 @@ node_aspatial <- node_sfnetwork %>% mutate(x = sf::st_coordinates(.)[,1],
          y = sf::st_coordinates(.)[,2],) %>% 
   st_drop_geometry()
 
-distance_raster <- read_stars('processed/euclidean_distance_from_zm.tif')
+distance_raster <- read_stars('processed/euclidean_distance_from_zm.tif') %>% 
+  rename(buffer_dist = euclidean_distance_from_zm.tif)
 
 ###
 
@@ -1091,7 +1092,7 @@ for (x in 1:length(groups)) {
       spatializer(table = metro_table, 
                   prefix = 'metro', 
                   dist_raster = distance_raster,
-                  origins = origins_matched,
+                  origins = origins_aspatial,
                   group_num = 30)
   } else {
     print(paste0('No data for ', x, ', skipping!'))
@@ -1148,7 +1149,7 @@ for (x in 1:length(groups)) {
       spatializer(table = lake_table, 
                   prefix = 'lake', 
                   dist_raster = distance_raster,
-                  origins = origins_matched,
+                  origins = origins_aspatial,
                   group_num = 30)
   } else {
     print(paste0('No data for ', x, ', skipping!'))
