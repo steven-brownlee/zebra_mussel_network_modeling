@@ -986,7 +986,6 @@ router <- function(row_subset, destination) {
   
 }
 
-
 spatializer <- function(table, prefix, dist_raster, origins,
                         group_num) {
       
@@ -1005,8 +1004,8 @@ spatializer <- function(table, prefix, dist_raster, origins,
                          prov_state_name = character(),
                          country = character(),
                          buffer_dist = numeric(),
-                         geom = st_sfc(crs = 'ESRI:102008')) %>% 
-        st_as_sf()
+                         x = numeric(),
+                         y = numeric())
       
       
       for (j in 1:20) {
@@ -1016,28 +1015,37 @@ spatializer <- function(table, prefix, dist_raster, origins,
         interior_selection <- table_groups[[j_val]] %>% select(-index)
         
         interior_joined <- left_join(interior_selection, origins, 
-                               by = 'origin_id') %>% select(-index) %>% 
+                               by = 'origin_id') %>% select(-index)
+          
+        template_points <- interior_joined %>% 
+          select(x, y) %>% 
+          distinct() %>% 
           st_as_sf(coords = c('x', 'y'), 
-             crs = st_crs('ESRI:102008'))
+                   crs = st_crs('ESRI:102008'))
         
-        interior_extraction <- st_extract(dist_raster, interior_joined,
-                                    FUN = 'mean') %>% 
-          distinct()
-        
+        interior_joined <- interior_joined %>% 
+          st_as_sf(coords = c('x', 'y'), 
+                   crs = st_crs('ESRI:102008'))
+      
+        interior_extraction <- st_extract(dist_raster, template_points,
+                                    FUN = 'mean') 
+
         interior_final <- st_join(interior_joined, interior_extraction)
         
-
+        interior_final <- interior_final %>%  mutate(x = sf::st_coordinates(.)[,1],
+         y = sf::st_coordinates(.)[,2],) %>% 
+          st_drop_geometry()
         
         final_template <- rbind(final_template, interior_final)
 }
-      
-      
       path <- paste0('outputs/network_components/routes/', eval(prefix), 
-      '/', eval(prefix), '_route_', x, '.gpkg') 
-      write_sf(final_template, path)
+      '/', eval(prefix), '_route_', x, '.rds') 
+      write_rds(final_template, path)
       
       return(print(paste('Completed:', x)))
-}
+ }
+      
+      
   
   
 ```
@@ -1051,6 +1059,8 @@ spatializer <- function(table, prefix, dist_raster, origins,
 metro_dest <- read_sf('outputs/network_components/destinations/metro/metro_destinations.gpkg')
 
 origins_matched <- read_sf('outputs/network_components/origin_matched.gpkg')
+
+origins_aspatial <- origins_matched %>% st_drop_geometry()
 
 network <- readRDS('outputs/network_components/sf_network.rds')
 
@@ -1067,7 +1077,7 @@ distance_raster <- read_stars('processed/euclidean_distance_from_zm.tif')
 plan(callr, workers = 6)
 options(future.globals.maxSize = 1.6e+10)
 
-groups <- split(1:10612, ceiling(seq_along(1:10612)/25))
+groups <- split(1:10612, ceiling(seq_along(1:10612)/10))
 
 ###
 
@@ -1104,6 +1114,8 @@ lake_dest <- read_sf('outputs/network_components/destinations/lake/lake_destinat
 
 origins_matched <- read_sf('outputs/network_components/origin_matched.gpkg')
 
+origins_aspatial <- origins_matched %>% st_drop_geometry()
+
 network <- readRDS('outputs/network_components/sf_network.rds')
 
 node_sfnetwork <- read_sf('outputs/network_components/node_sfnetwork.gpkg')
@@ -1112,14 +1124,15 @@ node_aspatial <- node_sfnetwork %>% mutate(x = sf::st_coordinates(.)[,1],
          y = sf::st_coordinates(.)[,2],) %>% 
   st_drop_geometry()
 
-distance_raster <- read_stars('processed/euclidean_distance_from_zm.tif')
+distance_raster <- read_stars('processed/euclidean_distance_from_zm.tif') %>% 
+  rename(buffer_dist = euclidean_distance_from_zm.tif)
 
 ###
 
 plan(callr, workers = 6)
 options(future.globals.maxSize = 1.6e+10)
 
-groups <- split(1:10612, ceiling(seq_along(1:10612)/25))
+groups <- split(1:10612, ceiling(seq_along(1:10612)/10))
 
 ###
 
@@ -1155,6 +1168,8 @@ ok_dest <- read_sf('outputs/network_components/destinations/okanagan/okanagan_de
 
 origins_matched <- read_sf('outputs/network_components/origin_matched.gpkg')
 
+origins_aspatial <- origins_matched %>% st_drop_geometry()
+
 network <- readRDS('outputs/network_components/sf_network.rds')
 
 node_sfnetwork <- read_sf('outputs/network_components/node_sfnetwork.gpkg')
@@ -1163,14 +1178,15 @@ node_aspatial <- node_sfnetwork %>% mutate(x = sf::st_coordinates(.)[,1],
          y = sf::st_coordinates(.)[,2],) %>% 
   st_drop_geometry()
 
-distance_raster <- read_stars('processed/euclidean_distance_from_zm.tif')
+distance_raster <- read_stars('processed/euclidean_distance_from_zm.tif') %>% 
+  rename(buffer_dist = euclidean_distance_from_zm.tif)
 
 ###
 
 plan(callr, workers = 6)
 options(future.globals.maxSize = 1.6e+10)
 
-groups <- split(1:10612, ceiling(seq_along(1:10612)/25))
+groups <- split(1:10612, ceiling(seq_along(1:10612)/10))
 
 ###
 
@@ -1184,7 +1200,7 @@ for (x in 1:length(groups)) {
       spatializer(table = ok_table, 
                   prefix = 'okanagan', 
                   dist_raster = distance_raster,
-                  origins = origins_matched,
+                  origins = origins_aspatial,
                   group_num = 30)
   } else {
     print(paste0('No data for ', x, ', skipping!'))
