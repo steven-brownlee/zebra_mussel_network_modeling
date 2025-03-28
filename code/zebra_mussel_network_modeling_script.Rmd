@@ -59,6 +59,8 @@ library(stars)
 library(paletteer)
 library(ggnewscale)
 library(terra)
+
+
 ```
 
 # Import shapefiles
@@ -67,10 +69,10 @@ library(terra)
 zm_occurrences <- read_sf('processed/dreissenid_occurrences.gpkg') %>% 
   st_transform(crs = 'ESRI:102008')
 
-us_metro <- read_sf('processed/us_metro_areas.gpkg')%>% 
+us_metro <- read_sf('processed/us_metro_areas.gpkg') %>% 
   st_transform(crs = 'ESRI:102008')
 
-canada_metro <- read_sf('processed/canada_metro_areas.gpkg')%>% 
+canada_metro <- read_sf('processed/canada_metro_areas.gpkg') %>% 
   st_transform(crs = 'ESRI:102008')
 
 land <- read_sf('processed/shared_north_america_coastline.gpkg') %>% 
@@ -87,6 +89,12 @@ qgis_bbox <- read_sf('processed/qgis_bbox.gpkg') %>%
 
 north_america_template_raster <- read_stars('processed/north_america_template_raster.tif')
 
+north_america_prov_state_poli_bounds <- read_sf('processed/north_america_prov_state_poli_bounds.gpkg') %>% 
+  st_transform(crs = 'ESRI:102008')
+
+north_america_land_ls <- read_sf('processed/north_america_inset_map_with_lakes.gpkg') %>% 
+  st_transform(crs = 'ESRI:102008')
+
 ```
 
 
@@ -97,7 +105,6 @@ north_america_template_raster <- read_stars('processed/north_america_template_ra
 # Generate Euclidean distance surface from mussel infestation sites
 
 land_vect <- land %>% vect()
-
 
 zm_occ <- zm_occurrences %>% mutate(occ_val = 1) %>% select(occ_val) %>% 
   vect()
@@ -1233,7 +1240,7 @@ for (x in 1:length(groups)) {
 
 ```{r}
 
-okanagan_files <- list.files('outputs/network_components/routes_compiled_spatial/', 
+okanagan_files <- list.files('outputs/network_components/routes/okanagan/', 
                             pattern = '*okanagan',
                             full.names = TRUE,
                             recursive = TRUE) 
@@ -1270,33 +1277,54 @@ test_grouped <- test_fraction  %>% group_by(origin_id) %>%
   ungroup() %>% 
 group_by(origin_id_fixed)
 
-test_grouped$origin_id_fixed <- as.character(test_grouped$origin_id_fixed)
 
-test_grouped <- test_grouped %>% filter(origin_id_fixed < 20)
+fresno <- test_grouped %>% filter(metro_name == 'Fresno')
+  
+oklahoma_city <- test_grouped %>% filter(metro_name == 'Oklahoma City')
+  
+salt_lake_city <- test_grouped %>% filter(metro_name == 'Salt Lake City')
 
-test_group_line_1 <- summarize(test_grouped, route_index = min(route_index))
+halifax <- test_grouped %>% filter(metro_name == 'Halifax')
+  
+roanoke <- test_grouped %>% filter(metro_name == 'Roanoke') 
+  
+ann_arbor <- test_grouped %>% filter(metro_name == 'Ann Arbor')
 
-test_group_line_2 <- summarize(test_grouped, route_index = max(route_index))
+sample_origins <- bind_rows(fresno, oklahoma_city, salt_lake_city, halifax,
+                            roanoke, ann_arbor)
+
+
+test_group_line_1 <- summarize(sample_origins, route_index = min(route_index))
+
+test_group_line_2 <- summarize(sample_origins, route_index = max(route_index))
 
 test_group_line <- bind_rows(test_group_line_1, test_group_line_2) %>% 
   group_by(origin_id_fixed)
 
-filtered <- test_grouped %>% ungroup() %>% group_by(origin_id_fixed, metro_name) %>% 
+filtered <- sample_origins %>% group_by(origin_id_fixed, metro_name) %>% 
   summarize()
 
 test_group_line <- left_join(test_group_line, filtered)
 
 test_grouped <- test_grouped %>% drop_na()
 
+sample_filtered <- sample_origins %>% 
+  mutate(buffer_dist_km = buffer_dist / 2000) %>% 
+  filter(buffer_dist_km < 50)
+
+###
+
+# north_south ordering, add state names
+
 slice_example <- ggplot() +  
-  geom_line(test_group_line, mapping = aes(x = route_index, y = origin_id_fixed, 
+  geom_line(sample_origins, mapping = aes(x = route_index, y = origin_id_fixed, 
                                            colour = metro_name),
             alpha = 0.7, linewidth = 0.75) +
  paletteer::scale_color_paletteer_d("fishualize::Oncorhynchus_gorbuscha") +
     guides(colour = guide_legend('Origin city')) +
   new_scale_color() +
-  geom_point(test_grouped, mapping = aes(x = route_index, y = origin_id_fixed,
-                                        colour = buffer_dist),
+  geom_point(sample_filtered, mapping = aes(x = route_index, y = origin_id_fixed,
+                                        colour = buffer_dist_km),
              position = position_dodge(0.5)) +
     ylab('Origin ID') +
   xlab('Route index') +
@@ -1305,7 +1333,10 @@ slice_example <- ggplot() +
                 direction = -1) +
   guides(colour = guide_legend('Distance \n to zebra mussel \n infestation')) +
   theme_classic(base_family = extrafont::choose_font('Source Code Pro'), 
-                base_size = 12) 
+                base_size = 12) +
+    theme(axis.text.y=element_blank(),
+        axis.ticks.y=element_blank() 
+        )
 
 slice_example
 
@@ -1313,6 +1344,8 @@ ggsave('figures/meeting_figures/feb_27_2024/slice_example.png',
        width = 9, 
        height = 12, 
        units = 'in')
+
+path_list <- unique(sample_origins$origin_id_fixed)
 
 
 ```
@@ -1695,3 +1728,73 @@ test <- read_rds(collate_list[1]) %>%
 
 
 ```
+
+
+# ~~ Figure files
+
+```{r}
+
+north_am <- read_sf()
+
+```
+
+# Flattened route
+
+```{r}
+
+```
+
+
+
+# 1.) Figure 1
+
+## Figure 1A
+
+```{r}
+
+origins <- read_sf('outputs/network_components/origin_matched.gpkg')
+
+focal_bbox <- st_bbox(st_buffer(st_as_sfc(st_bbox(origins)), dist = 100000))
+
+origins_filtered <- origins %>% filter(origin_id %in% path_list)
+
+# add 50 km single buffer around zm occurrences, with strong transparency
+
+# st_erase land and country poli bounds
+
+# Increase thinkness US border
+
+north_america_country_poli_bounds <- north_america_prov_state_poli_bounds %>% 
+  group_by(COUNTRY) %>% 
+  summarize()
+
+
+figure_1 <- ggplot() +
+    geom_sf(data = north_america_land_ls, 
+            fill = 'grey33', 
+            colour = 'grey8') +
+      geom_sf(data = north_america_prov_state_poli_bounds, 
+            fill = NA, 
+            colour = 'grey8', 
+            alpha = 0.4,
+          linewidth = 0.1) +
+    #    geom_sf(data = north_america_country_poli_bounds, 
+      #      fill = NA, 
+      #      colour = 'grey8', 
+      #      alpha = 0.1,
+      #    linewidth = 0.3) +
+#  geom_sf(data = origins_filtered, fill = ) +
+    coord_sf(xlim = c(focal_bbox[[1]], focal_bbox[[3]]),
+             ylim = c(focal_bbox[[2]], focal_bbox[[4]]), 
+             expand = FALSE) +
+      theme(plot.background = element_rect(fill = 'white'),
+        line = element_blank(), 
+    rect = element_blank(), 
+    panel.background = element_rect(fill = '#7f7f7f'),
+    legend.position = 'bottom')
+
+figure_1 
+
+```
+
+## Figure 1B
