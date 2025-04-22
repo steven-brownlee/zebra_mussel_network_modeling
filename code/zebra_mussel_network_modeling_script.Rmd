@@ -1231,6 +1231,69 @@ for (x in 1:length(groups)) {
 
 ```{r}
 
+okanagan_files <- list.files('outputs/network_components/routes/okanagan/', 
+                            pattern = '*okanagan',
+                            full.names = TRUE,
+                            recursive = TRUE) 
+
+complete_table <- lapply(okanagan_files, readRDS) %>% 
+  bind_rows()
+
+
+
+###
+
+exposure_index_template <- tibble(metro_name = character(),
+                                  count_exposures = numeric(),
+                                  last_exposure_dist = numeric(),
+                                  relative_count = numeric(),
+                                  relative_last_exposure = numeric())
+
+  
+  number_exposures <- complete_table  %>% group_by(metro_name) %>% 
+    mutate(buffer_dist_km = buffer_dist / 2000) %>% 
+    filter(buffer_dist_km < 50) %>% 
+    mutate(tally  = 1) %>% 
+    summarize(count_exposures = sum(tally))
+  
+  last_exposure <- complete_table  %>% group_by(metro_name) %>% 
+    mutate(buffer_dist_km = buffer_dist / 2000) %>% 
+    filter(buffer_dist_km < 50) %>% 
+    summarize(max_exposure_position = max(node_position))
+  
+  max_length <- interior_route %>% group_by(metro_name) %>% 
+    summarize(max_length = max(node_position))
+  
+  last_exposure_comb <- left_join(last_exposure, max_length, by = 'metro_name') %>%
+    mutate(last_exposure_dist = max_length - max_exposure_position) %>% 
+    select(metro_name, last_exposure_dist)
+  
+  exposure_indices <- left_join(number_exposures, last_exposure_comb, by = 'metro_name')
+  
+  baseline_exposure_number <- max(exposure_indices$count_exposures)
+  
+  baseline_last_exposure <- max(exposure_indices$last_exposure_dist)
+  
+  exposure_indices_calculated <- exposure_indices %>% 
+    mutate(relative_count = count_exposures / baseline_exposure_number,
+         relative_last_exposure = last_exposure_dist / baseline_last_exposure)
+  
+  exposure_index_template <- bind_rows(exposure_index_template, exposure_indices_calculated)
+  
+  print(paste('Completed:', ival, 'of', length(okanagan_files)))
+}
+
+
+
+ggplot() + 
+  geom_bar(data = exposure_indices,
+                    aes(x = metro_name, 
+                        y = last_exposure_dist),
+           stat = 'identity',
+           colour = 'grey22') +
+      theme_classic(base_family = extrafont::choose_font('Source Code Pro'), 
+                base_size = 12) 
+
 
 
 ```
@@ -1277,22 +1340,8 @@ test_grouped <- test_fraction  %>% group_by(origin_id) %>%
   ungroup() %>% 
 group_by(origin_id_fixed)
 
-
-fresno <- test_grouped %>% filter(metro_name == 'Fresno')
-  
-oklahoma_city <- test_grouped %>% filter(metro_name == 'Oklahoma City')
-  
-salt_lake_city <- test_grouped %>% filter(metro_name == 'Salt Lake City')
-
-halifax <- test_grouped %>% filter(metro_name == 'Halifax')
-  
-roanoke <- test_grouped %>% filter(metro_name == 'Roanoke') 
-  
-ann_arbor <- test_grouped %>% filter(metro_name == 'Ann Arbor')
-
-sample_origins <- bind_rows(fresno, oklahoma_city, salt_lake_city, halifax,
-                            roanoke, ann_arbor)
-
+sample_origins <- test_grouped %>% 
+  filter(metro_name %in% metro_list) 
 
 test_group_line_1 <- summarize(sample_origins, route_index = min(route_index))
 
@@ -1317,13 +1366,13 @@ sample_filtered <- sample_origins %>%
 # north_south ordering, add state names
 
 slice_example <- ggplot() +  
-  geom_line(sample_origins, mapping = aes(x = route_index, y = origin_id_fixed, 
+  geom_line(sample_origins, mapping = aes(x = route_index, y = metro_name, 
                                            colour = metro_name),
             alpha = 0.7, linewidth = 0.75) +
  paletteer::scale_color_paletteer_d("fishualize::Oncorhynchus_gorbuscha") +
     guides(colour = guide_legend('Origin city')) +
   new_scale_color() +
-  geom_point(sample_filtered, mapping = aes(x = route_index, y = origin_id_fixed,
+  geom_point(sample_filtered, mapping = aes(x = route_index, y = metro_name,
                                         colour = buffer_dist_km),
              position = position_dodge(0.5)) +
     ylab('Origin ID') +
@@ -1331,6 +1380,31 @@ slice_example <- ggplot() +
   scale_colour_paletteer_c("ggthemes::Sunset-Sunrise Diverging",
                 na.value = 'grey80',
                 direction = -1) +
+  guides(colour = guide_legend('Distance \n to zebra mussel \n infestation')) +
+  theme_classic(base_family = extrafont::choose_font('Source Code Pro'), 
+                base_size = 12) +
+    theme(axis.text.y=element_blank(),
+        axis.ticks.y=element_blank() 
+        )
+
+slice_example
+
+
+slice_example <- ggplot() +  
+  geom_line(sample_origins, mapping = aes(x = route_index, y = metro_name, 
+                                           colour = metro_name),
+            alpha = 0.7, linewidth = 0.75) +
+ #paletteer::scale_color_paletteer_d("fishualize::Oncorhynchus_gorbuscha") +
+    guides(colour = guide_legend('Origin city')) +
+  new_scale_color() +
+  geom_point(sample_filtered, mapping = aes(x = route_index, y = metro_name,
+                                        colour = buffer_dist_km),
+             position = position_dodge(0.5)) +
+    ylab('Origin ID') +
+  xlab('Route index') +
+ # scale_colour_paletteer_c("ggthemes::Sunset-Sunrise Diverging",
+  #              na.value = 'grey80',
+  #              direction = -1) +
   guides(colour = guide_legend('Distance \n to zebra mussel \n infestation')) +
   theme_classic(base_family = extrafont::choose_font('Source Code Pro'), 
                 base_size = 12) +
