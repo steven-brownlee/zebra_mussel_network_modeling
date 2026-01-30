@@ -1,12 +1,14 @@
 # Zebra mussel network modeling script
 
-# Contact information
+# --------------------------------------------------
+
+# ~ 1.) Contact information
 
 Contact: Steven Brownlee
 Email: steven.fr.brownlee@gmail.com
 Date last revised: June 24 2024
 
-# Session info
+# ~ 2.) Session info
 
 R version 4.4.1 (2024-06-14)
 Platform: x86_64-redhat-linux-gnu
@@ -36,13 +38,49 @@ loaded via a namespace (and not attached):
 [21] compiler_4.4.1    purrr_1.0.2       rstudioapi_0.16.0 tools_4.4.1      
 [25] pillar_1.9.0      evaluate_0.24.0   yaml_2.3.10       rlang_1.1.4   
 
-# Set up data directory
 
-```{r setup, include=FALSE}
-knitr::opts_knit$set(root.dir = '/home/steven/Documents/workspace/thesis/ch2/gis_data/')
+# --------------------------------------------------
+
+# ~ 3.) Set up data directory
+
+```{r}
+
+data_folder_location <- '/home/steven/Documents/workspace/thesis/ch2/gis_data/'
+
 ```
 
-# R library setup
+
+```{r setup, include=FALSE}
+
+knitr::opts_knit$set(root.dir = data_folder_location)
+
+root_name <- data_folder_location
+
+#
+
+figure_path <- 'figure_output/'
+
+data_path <- 'data_outputs/'
+
+processed <- 'processed/'
+
+outputs <- 'outputs/'
+
+figure_files <- 'figure_gis_files/'
+
+exemption_list <- c('data_folder_location', 'root_name',
+                    'figure_path', 'data_path', 'processed',
+                    'outputs', 'figure_files', 'exemption_list',
+                    'p_worker_number', 's_worker_number', 't_worker_number',
+                    'q_worker_number', 'global_filesize')
+
+#
+
+options(scipen = 999)
+
+```
+
+# ~ 4.) R library setup
 
 ```{r}
 library(sf)
@@ -52,6 +90,7 @@ library(sfnetworks)
 library(qgisprocess)
 library(future)
 library(future.callr)
+library(parallel)
 library(purrr)
 library(furrr)
 library(progressr)
@@ -60,10 +99,43 @@ library(paletteer)
 library(ggnewscale)
 library(terra)
 
+```
+# --------------------------------------------------
+# ~ 5.) Set parallel processing parameters
+
+```{r}
+
+if (detectCores() > 8) {
+  
+  worker_number = detectCores() - 4
+  
+} else {
+  
+  worker_number = detectCores() - 2
+}
+
+#
+                
+global_filesize = 10000000000
+
+plan(callr, workers = worker_number)
+options(future.globals.maxSize = global_filesize)
 
 ```
 
-# Import shapefiles
+# --------------------------------------------------
+
+# One step setup chunk
+
+```{r}
+
+# hit 'run all chunks above' button to set up document in one easy press!
+
+```
+
+# --------------------------------------------------
+
+# ~ 6.) Import shapefiles
 
 ```{r}
 zm_occurrences <- read_sf('processed/dreissenid_occurrences.gpkg') %>% 
@@ -97,48 +169,84 @@ north_america_land_ls <- read_sf('processed/north_america_inset_map_with_lakes.g
 
 ```
 
-
-# Pre-processing
+# ~ 7.) Pre-processing
 
 ```{r}
 
 # Generate Euclidean distance surface from mussel infestation sites
 
-land_vect <- land %>% vect()
-
-zm_occ <- zm_occurrences %>% mutate(occ_val = 1) %>% select(occ_val) %>% 
+land_vect <- land %>% 
   vect()
 
-template_rast <- north_america_template_raster %>% rast()
+zm_occ <- zm_occurrences %>% 
+  mutate(occ_val = 1) %>% 
+  select(occ_val) %>% 
+  vect()
 
-test_rast <- rasterize(zm_occ_raster, template_rast, field = 'occ_val') 
+template_rast <- north_america_template_raster %>% 
+  rast()
 
-euclidean_distance <- terra::distance(test_rast)
+zm_occ_raster <- rasterize(zm_occ, template_rast, 
+                       field = 'occ_val') 
 
-euclidean_distance <- mask(euclidean_distance, mask = land_vect)
+euclidean_distance <- terra::distance(zm_occ_raster)
 
-writeRaster(distance_test, 'processed/euclidean_distance_from_zm.tif')
+euclidean_distance <- mask(euclidean_distance, 
+                           mask = land_vect)
+
+writeRaster(euclidean_distance, 
+            'processed/euclidean_distance_from_zm.tif',
+            overwrite = TRUE)
 
 # Merge US and Canada metro areas
 
-us_metro <- us_metro %>% select(NAME) %>% rename(metro_area = NAME)
+us_metro <- us_metro %>% 
+  select(NAME) %>% 
+  rename(metro_area = NAME)
 
-canada_metro <- canada_metro %>% select(CMANAME) %>% rename(metro_area = CMANAME)
+canada_metro <- canada_metro %>% 
+  select(CMANAME) %>% 
+  rename(metro_area = CMANAME)
 
 north_america_metro <- rbind(us_metro, canada_metro)
 
 # Create node network for USDOT roads
+
+shp_list <- c('zm_occurrences', 'north_america_metro', 'usdot_road_network',
+              'qgis_bbox')
+
+exemption_list <- append(exemption_list, shp_list)
+
+###
+
+# Cleanup:
+
+###
+
+var_list <- ls() %>% 
+  unlist() %>% 
+  as_tibble() 
+
+var_list_filtered <- var_list %>% 
+  filter(!value %in% exemption_list) %>% 
+  deframe()
+
+rm(list = var_list_filtered) 
+
+gc()
+
+###
+
 ```
 
-# Split road into manageable chunks
+# ~ 8.) Split road into manageable chunks
 
 ```{r}
 
-usdot_road_network <- usdot_road_network %>% rownames_to_column('seg_id')
+usdot_road_network <- usdot_road_network %>% 
+  rownames_to_column('seg_id')
 
-
-plan(callr, workers = 6)
-options(future.globals.maxSize= 891289600)
+###
 
 node_generator <- function(sublist) {
 
@@ -155,24 +263,28 @@ for (x in sublist) {
                          speed_limit = numeric(),
                          class = numeric())
   
-segment_filtered <- usdot_road_network %>% filter(seg_id == x)
-length_extract = segment_filtered$LENGTH
-
-if (length_extract <= 1) {
-  sample_size = 5
-} else if (1 < length_extract & length_extract <= 5 ) {
-  sample_size = 20
-} else if (5 < length_extract & length_extract <= 20) {
-  sample_size = 100 
-} else if (20 < length_extract & length_extract <= 50) {
-  sample_size = 400 
-} else if (50 < length_extract & length_extract <= 100) {
-  sample_size = 700
-} else if (100 < length_extract & length_extract <= 400) {
-  sample_size = 2500
-} else {sample_size = 2000} 
-
-usdot_nodes <- st_sample(segment_filtered, size = sample_size, type = 'regular') %>% 
+  segment_filtered <- usdot_road_network %>% 
+    filter(seg_id == x)
+  
+  length_extract = segment_filtered$LENGTH
+  
+  if (length_extract <= 1) {
+    sample_size = 5
+    } else if (1 < length_extract & length_extract <= 5 ) {
+      sample_size = 20
+    } else if (5 < length_extract & length_extract <= 20) {
+      sample_size = 100 
+    } else if (20 < length_extract & length_extract <= 50) {
+      sample_size = 400 
+    } else if (50 < length_extract & length_extract <= 100) {
+      sample_size = 700
+    } else if (100 < length_extract & length_extract <= 400) {
+      sample_size = 2500
+    } else {sample_size = 2000} 
+  
+  usdot_nodes <- st_sample(segment_filtered, 
+                           size = sample_size, 
+                           type = 'regular') %>% 
   st_cast("POINT") %>% 
   st_as_sf() %>% 
   mutate(x_coord = sf::st_coordinates(.)[,1],
@@ -187,15 +299,17 @@ usdot_nodes <- st_sample(segment_filtered, size = sample_size, type = 'regular')
          speed_limit = segment_filtered$SPEEDLIM,
          class = segment_filtered$CLASS) %>% 
   st_drop_geometry()
+  
+  usdot_nodes$x_coord <- as.numeric(usdot_nodes$x_coord)
+  usdot_nodes$y_coord <- as.numeric(usdot_nodes$y_coord)
+  
+  usdot_template <- rbind(usdot_template, usdot_nodes) 
+  
+  }
 
-usdot_nodes$x_coord <- as.numeric(usdot_nodes$x_coord)
-usdot_nodes$y_coord <- as.numeric(usdot_nodes$y_coord)
-
-usdot_template <- rbind(usdot_template, usdot_nodes) 
-
-}
-usdot_filled <- usdot_template
-return(usdot_filled)
+  usdot_filled <- usdot_template
+  
+  return(usdot_filled)
 }
 
 usdot_nodes <- future_map(1:716638, ~node_generator(.x))
@@ -210,8 +324,8 @@ rm(usdot_nodes_2, usdot_nodes)
 
 usdot_combined <- read_rds('outputs/node_folder/usdot_combined_2.rds') 
 
-usdot_combined <- usdot_combined %>% rowid_to_column('node_id')
-
+usdot_combined <- usdot_combined %>% 
+  rowid_to_column('node_id')
 
 inside_list = c(1, 500000,
                 1000000,
@@ -226,7 +340,7 @@ inside_list = c(1, 500000,
                 10000000,
                 11000000)
 
-outside_list= c(500000,
+outside_list = c(500000,
                 1000000,
                 2000000,
                 3000000,
@@ -247,42 +361,97 @@ for (i in 1:13) {
     filter(node_id >= inside_index & node_id < outside_index)
    usdot_subset <- usdot_subset %>% 
      drop_na() %>% 
-  st_as_sf(coords = c('x_coord', 'y_coord'), crs = st_crs('ESRI:102008'))
-  write_sf(usdot_subset, paste0('outputs/node_folder/node_pieces/node_subset_', i, '.gpkg'))
+  st_as_sf(coords = c('x_coord', 'y_coord'), 
+           crs = st_crs('ESRI:102008'))
+  write_sf(usdot_subset, paste0(root_name, outputs, 
+                                'node_folder/node_pieces/node_subset_', 
+                                i, '.gpkg'))
   print(paste('Completed:', i))
 }
+
+ex_list_df <- data.frame(exemption_list)
+
+exemption_list <- ex_list_df[ex_list_df$exemption_list != "usdot_road_network", ]
+
+###
+
+# Cleanup:
+
+###
+
+var_list <- ls() %>% 
+  unlist() %>% 
+  as_tibble() 
+
+var_list_filtered <- var_list %>% 
+  filter(!value %in% exemption_list) %>% 
+  deframe()
+
+rm(list = var_list_filtered) 
+
+gc()
 
 ###
 ```
 
 
-# Join road data to grid
-```{r}
-#overlay_grid <- st_make_grid(qgis_bbox, cellsize = 2000,
-#                             what = 'polygons', square = FALSE) %>% st_as_sf() %>% 
-#  st_transform(crs = 'ESRI:102008')
+# ~ 9.) Join road data to grid
 
-#write_sf(overlay_grid, 'processed/2km_hexagon_grid.gpkg')
+## i. Joining road data
+
+```{r}
+
+# Note for users: generating the hex grid is a very long process,
+# this will allow you to skip it if you want to.
+
+hex_location <- 'processed/2km_hexagon_grid.gpkg'
+
+if (file.exists(paste0(root_name, hex_location)) == TRUE) {
+  
+  print('Hex grid already exists, skipping!')
+  
+} else {
+  
+  print('Hex grid does not exist, generating!')
+  
+  overlay_grid <- st_make_grid(qgis_bbox, 
+                             cellsize = 2000,
+                             what = 'polygons', 
+                             square = FALSE) %>% 
+  st_as_sf() %>% 
+  st_transform(crs = 'ESRI:102008') %>% 
+  rowid_to_column('hex_id')
+  
+  write_sf(overlay_grid, paste0(root_name, hex_location))
+  
+  }
+
+### ---------------------------------------------------------------------------
 
 overlay_grid <- read_sf('processed/2km_hexagon_grid.gpkg')
-
-overlay_grid <- overlay_grid %>% rowid_to_column('hex_id')
 
 overlay_grid$hex_group <- as.numeric(cut_number(overlay_grid$hex_id, 1000))
 
 for (x in 1:1000) {
-  overlay_subset <- overlay_grid %>% filter(hex_group == x)
-  write_sf(overlay_subset, paste0('outputs/overlay_grid_segments/hex_group_', x, '.gpkg'))
+  overlay_subset <- overlay_grid %>% 
+    filter(hex_group == x)
+  write_sf(overlay_subset, 
+           paste0('outputs/overlay_grid_segments/hex_group_', x, '.gpkg'))
   print(paste('Completed:', x))
 }
 
 
-hex_list <- list.files('outputs/overlay_grid_segments/', 
+```
+
+## ii. Create joiner function
+
+```{r}
+hex_list <- list.files(paste0(root_name, 'outputs/overlay_grid_segments/'), 
                             pattern = '*.gpkg',
                             full.names = TRUE,
                             recursive = TRUE)
 
-node_list <- list.files('outputs/node_folder/node_pieces/', 
+node_list <- list.files(paste0(root_name, 'outputs/node_folder/node_pieces/'), 
                             pattern = '*.gpkg',
                             full.names = TRUE,
                             recursive = TRUE)
@@ -299,17 +468,30 @@ table_template <- tibble(hexid = numeric(),
                          lanes = numeric())
 
 joiner <- function(sequence) {
-for (x in sequence) {
-  hex_segment  <- read_sf(hex_list[x]) %>% select(-hex_group)
-  for (i in 1:13) {
-    interior_nodes  <- read_sf(node_list[i])
-    hex_interior <- st_join(hex_segment, interior_nodes) %>% st_drop_geometry()
-    table_template <- rbind(table_template, hex_interior)
-    print(paste('Interior done:', i))
-}
-  table_export <- table_template
-  write_rds(table_export, paste0('outputs/overlay_grid_joined/overlay_grid_joined_', x, '.rds'))
-  table_template <- tibble(hexid = numeric(),
+  
+  for (x in sequence) {
+    hex_segment  <- read_sf(hex_list[x]) %>% 
+      select(-hex_group)
+    
+    for (i in 1:13) {
+      interior_nodes  <- read_sf(node_list[i])
+      
+      hex_interior <- st_join(hex_segment, interior_nodes) %>% 
+        st_drop_geometry()
+      
+      table_template <- rbind(table_template, hex_interior)
+      
+      print(paste('Interior done:', i))
+      
+      }
+    
+    table_export <- table_template
+    
+    write_rds(table_export, 
+              paste0(root_name, 'outputs/overlay_grid_joined/overlay_grid_joined_', 
+                     x, '.rds'))
+    
+    table_template <- tibble(hexid = numeric(),
                          node_id = numeric(),
                          usdot_id = numeric(),
                          country = numeric(),
@@ -318,68 +500,218 @@ for (x in sequence) {
                          road_name = character(),
                          surface_type = character(),
                          lanes = numeric())
-  return(table_export)
+    
+    return(table_export)
+    
+  }
+  
 }
+
+```
+
+## iii. Run parallel processses
+
+```{r}
+# -----------------------------------------------------------------------------
+
+# Primary
+
+p_joined <- future_map(1:250, ~joiner(.x))
+
+p_joined <- bind_rows(p_joined)
+
+write_rds(p_joined, paste0(root_name, 'outputs/overlay_grid_joined/overlay_tables/p_joined_table.rds'))
+
+p_joined_table <- drop_na(p_joined)
+
+write_rds(p_joined_table, paste0(root_name,
+       'outputs/overlay_grid_joined/overlay_tables/p_joined_table_na_dropped.rds'))
+
+# -----------------------------------------------------------------------------
+```
+
+
+```{r}
+# -----------------------------------------------------------------------------
+
+# Secondary
+
+s_joined <- future_map(250:500, ~joiner(.x))
+
+s_joined <- bind_rows(s_joined)
+
+write_rds(s_joined, paste0(root_name, 'outputs/overlay_grid_joined/overlay_tables/s_joined_table.rds'))
+
+s_joined_table <- drop_na(s_joined)
+
+write_rds(s_joined_table, paste0(root_name,
+       'outputs/overlay_grid_joined/overlay_tables/s_joined_table_na_dropped.rds'))
+
+# -----------------------------------------------------------------------------
+```
+
+
+```{r}
+# -----------------------------------------------------------------------------
+
+# Tertiary
+
+t_joined <- future_map(500:750, ~joiner(.x))
+
+t_joined <- bind_rows(t_joined)
+
+write_rds(t_joined, paste0(root_name, 'outputs/overlay_grid_joined/overlay_tables/t_joined_table.rds'))
+
+t_joined_table <- drop_na(t_joined)
+
+write_rds(t_joined_table, paste0(root_name,
+       'outputs/overlay_grid_joined/overlay_tables/t_joined_table_na_dropped.rds'))
+
+# -----------------------------------------------------------------------------
+
+```
+
+
+```{r}
+# -----------------------------------------------------------------------------
+
+# Quaternary
+
+q_joined <- future_map(750:1000, ~joiner(.x))
+
+q_joined <- bind_rows(q_joined)
+
+write_rds(q_joined, paste0(root_name, 'outputs/overlay_grid_joined/overlay_tables/q_joined_table.rds'))
+
+q_joined_table <- drop_na(q_joined)
+
+write_rds(q_joined_table, paste0(root_name,
+       'outputs/overlay_grid_joined/overlay_tables/q_joined_table_na_dropped.rds'))
+
+# -----------------------------------------------------------------------------
+```
+
+## iv. Import parallel products, filter NAs and join
+
+```{r}
+
+import_template <- tibble(hex_id = numeric(),
+                          node_id = numeric(),
+                          usdot_id = numeric(),
+                          country = numeric(),
+                          jurisdiction = character(),
+                          road_number = character(),
+                          road_name = character(),
+                          surface_type = character(),
+                          lanes = numeric(),
+                          speed_limit = numeric(),
+                          class = numeric())
+
+file_list <- c('p_joined_table_na_dropped.rds',
+               's_joined_table_na_dropped.rds',
+               'q_joined_table_na_dropped.rds',
+               't_joined_table_na_dropped.rds')
+
+for (i in 1:4) {
+  ival = eval(i)
+  int_file = file_list[ival]
+  int_table <- readRDS(paste0(root_name,
+       'outputs/overlay_grid_joined/overlay_tables/', int_file))
+  import_template <- bind_rows(import_template, int_table)
+  rm(int_table)
+  gc()
+  
+  print(paste('Completed:', ival, 'of', 4))
+
 }
 
-plan(callr, workers = 6)
-options(future.globals.maxSize= 891289600)
+###
 
+joined_table_summarized <- import_template %>% 
+  select(hex_id, country, jurisdiction, surface_type, 
+         surface_type, lanes, speed_limit, class)
 
-joined <- future_map(1:1000, ~joiner(.x))
+joined_table_summarized$surface_type <-
+  case_match(joined_table_summarized$surface_type, 
+             'Unpaved' ~ '1', 
+             'Paved' ~ '2')
 
-joined <- bind_rows(joined)
+joined_table_summarized$surface_type <-
+  as.numeric(joined_table_summarized$surface_type)
 
-write_rds(joined, 'outputs/overlay_grid_joined/overlay_tables/joined_table.rds')
-
-joined_table <- drop_na(joined)
-
-write_rds(joined_table, 'outputs/overlay_grid_joined/overlay_tables/joined_table_na_dropped.rds')
-
-joined_table <- read_rds('outputs/overlay_grid_joined/overlay_tables/joined_table_na_dropped.rds')
-
-joined_table_summarized <- joined_table %>% select(hex_id, country, jurisdiction,
-                                                   surface_type, surface_type,
-                                                   lanes, speed_limit, class)
-
-joined_table_summarized$surface_type <- case_match(joined_table_summarized$surface_type, 
-                                            'Unpaved' ~ '1', 
-                                            'Paved' ~ '2')
-
-joined_table_summarized$surface_type <- as.numeric(joined_table_summarized$surface_type)
-
-joined_table_summarized <- joined_table %>% 
+joined_table_summarized <- joined_table_summarized %>% 
   group_by(hex_id) %>% 
   summarize(surface_type = max(surface_type),
             lanes = max(lanes),
             speed_limit = max(speed_limit))
 
-hex_final <- left_join(overlay_grid, joined_table_summarized, by = 'hex_id') %>% 
+hex_final <- left_join(overlay_grid, joined_table_summarized, 
+                       by = 'hex_id') %>% 
   drop_na()
 
 
-write_sf(hex_final, 'outputs/network_components/hex_grid_final.gpkg')
+write_sf(hex_final, paste0(root_name, 
+                           'outputs/network_components/hex_grid_final.gpkg'))
+
+###
+
+# Cleanup:
+
+###
+
+var_list <- ls() %>% 
+  unlist() %>% 
+  as_tibble() 
+
+var_list_filtered <- var_list %>% 
+  filter(!value %in% exemption_list) %>% 
+  deframe()
+
+rm(list = var_list_filtered) 
+
+gc()
+
+###
 
 ```
 
-# Edge generation
+
+# ~ 10.) Edge and midpoint generation
+
+## i. Generate hex centroids
 
 ```{r}
-hexagon_grid <- read_sf('outputs/network_components/hex_grid_final.gpkg') %>% 
+hexagon_grid <- read_sf(paste0(root_name, 
+                               'outputs/network_components/hex_grid_final.gpkg')) %>% 
   rowid_to_column('hex_rowid')
 
-hex_centroids <- hexagon_grid %>% st_centroid() %>%  
+hex_centroids <- hexagon_grid %>% 
+  st_centroid() %>%  
   mutate(x = sf::st_coordinates(.)[,1],
          y = sf::st_coordinates(.)[,2]) %>% 
   select(hex_rowid, surface_type, lanes, speed_limit, x, y, geom)
 
-#write_sf(hex_centroids, 'outputs/network_components/centroids.gpkg')
+write_sf(hex_centroids, paste0(root_name,
+                               'outputs/network_components/centroids.gpkg'))
 
-hex_centroids_aspatial <- hex_centroids %>% st_drop_geometry()
+```
+
+## ii. Edge generator function setup
+
+```{r}
+
+hex_centroids <- read_sf(paste0(root_name,
+                               'outputs/network_components/centroids.gpkg'))
+
+
+hex_centroids_aspatial <- hex_centroids %>% 
+  st_drop_geometry()
 
 ###
 
-row_indices <- split(hex_centroids$hex_rowid, cut(hex_centroids$hex_rowid, breaks = 160))
+row_indices <- split(hex_centroids$hex_rowid, 
+                     cut(hex_centroids$hex_rowid, 
+                         breaks = 160))
 
 
 ###
@@ -410,55 +742,166 @@ edge_generator <- function(row_subset) {
       rename(hex_rowid_2 = hex_rowid,
              x_2 = x,
              y_2 = y) %>% 
-      mutate(comb_id = paste0(as.character(hex_rowid_1), '_', as.character(hex_rowid_2)))
+      mutate(comb_id = paste0(as.character(hex_rowid_1),
+                              '_', as.character(hex_rowid_2)))
    
      distance_array_template <- rbind(distance_array_template, coord_matches)
   }
   return(distance_array_template)
 }
 
-# Florilegium: 
+```
 
-plan(callr, workers = 6)
-options(future.globals.maxSize = 891289600)  
+## iii. Run parallel processes
 
-for  (i in 1:40) {
+Error:
+
+Error: Future (<unnamed-6>) of class CallrFuture failed for unknown reason while running, while running on localhost (pid 867374; exit code -11). CallrFuture (<unnamed-6>) failed. The reason reported was ‘! callr subprocess failed: could not start R, exited with non-zero status, has crashed or was killed’. Post-mortem diagnostic: The parallel worker (PID 867374) started at 2026-01-14T08:58:32+0000 finished with exit code -11. The total size of the 12 globals exported is 82.19 MiB The three largest globals are ‘hex_centroids’ (60.35 MiB of class ‘list’), ‘hex_centroids_aspatial’ (21.77 MiB of class ‘list’) and ‘as.data.frame’ (32.38 KiB of class ‘function’)
+
+84
+
+```{r}
+# -----------------------------------------------------------------------------
+
+# Primary
+
+for  (i in 84:93) {
+  
   ival = eval(i)
-  edge_collection <- future_map(row_indices[ival], ~edge_generator(.x)) %>% bind_rows
-  write_rds(edge_collection, paste0('outputs/network_components/edge_folder/edge_collection_',
+  
+  edge_file <- paste0(root_name, 
+                      'outputs/network_components/edge_folder/edge_collection_',
+                                   ival, '.rds')
+  
+  if (file.exists(edge_file) == TRUE) {
+  
+  print(paste('Edge collection', ival, 'exists, skipping!'))
+  
+} else {
+  
+  edge_collection <- future_map(row_indices[ival], ~edge_generator(.x)) %>% 
+    bind_rows
+  write_rds(edge_collection, paste0(root_name, 
+                                'outputs/network_components/edge_folder/edge_collection_',
                                    ival, '.rds'))
   print(paste('Completed:', ival))
+  
+  gc()
+  
+  }
+  
 }
 
+# -----------------------------------------------------------------------------
+```
 
-# Advesperascit:
+```{r}
+# -----------------------------------------------------------------------------
 
-plan(callr, workers = 12)
-options(future.globals.maxSize = 891289600)
+# Secondary
 
 for  (i in 40:80) {
+  
   ival = eval(i)
-  edge_collection <- future_map(row_indices[ival], ~edge_generator(.x)) %>% bind_rows
-  write_rds(edge_collection, paste0('outputs/network_components/edge_folder/edge_collection_',
+  
+  edge_file <- paste0(root_name, 
+                      'outputs/network_components/edge_folder/edge_collection_',
+                                   ival, '.rds')
+  
+  if (file.exists(edge_file) == TRUE) {
+  
+  print(paste('Edge collection', ival, 'exists, skipping!'))
+  
+} else {
+
+  edge_collection <- future_map(row_indices[ival], ~edge_generator(.x)) %>%
+    bind_rows
+  write_rds(edge_collection, paste0(root_name,
+                                  'outputs/network_components/edge_folder/edge_collection_',
                                    ival, '.rds'))
-  print(paste('Completed:', ival))
+  print(paste('Completed:', ival)) 
+  
+  gc()
+  
+  }
 }
 
+# -----------------------------------------------------------------------------
+```
 
-# Cognoscere
+```{r}
+# -----------------------------------------------------------------------------
 
-plan(callr, workers = 20)
-options(future.globals.maxSize = 891289600)
+# Tertiary
 
-for  (i in 150:160) {
+for  (i in 80:120) {
+  
   ival = eval(i)
-  edge_collection <- future_map(row_indices[ival], ~edge_generator(.x)) %>% bind_rows
-  write_rds(edge_collection, paste0('/home/steven/Downloads/edge_collection_',
+  
+  edge_file <- paste0(root_name, 
+                      'outputs/network_components/edge_folder/edge_collection_',
+                                   ival, '.rds')
+  
+  if (file.exists(edge_file) == TRUE) {
+  
+  print(paste('Edge collection', ival, 'exists, skipping!'))
+  
+} else {
+  
+  edge_collection <- future_map(row_indices[ival], ~edge_generator(.x)) %>% 
+    bind_rows
+  write_rds(edge_collection, paste0(root_name,
+                                  'outputs/network_components/edge_folder/edge_collection_',
                                    ival, '.rds')) 
   
   print(paste('Completed:', ival))
+  
+  gc()
+  
+  }
 }
   
+# -----------------------------------------------------------------------------
+
+```
+
+```{r}
+# -----------------------------------------------------------------------------
+
+# Quaternary
+
+for  (i in 120:160) {  
+  
+  ival = eval(i)
+  
+  edge_file <- paste0(root_name, 
+                      'outputs/network_components/edge_folder/edge_collection_',
+                                   ival, '.rds')
+  
+  if (file.exists(edge_file) == TRUE) {
+  
+  print(paste('Edge collection', ival, 'exists, skipping!'))
+  
+} else {
+  
+  edge_collection <- future_map(row_indices[ival], ~edge_generator(.x)) %>% 
+    bind_rows
+  write_rds(edge_collection, paste0('outputs/network_components/edge_folder/edge_collection_',
+                                   ival, '.rds'))
+  print(paste('Completed:', ival))
+  
+  gc()
+  
+  }
+}
+
+# -----------------------------------------------------------------------------
+```
+
+## iv. Compile edges
+
+```{r}
+
 ####
 
 edge_compilation <- list.files('outputs/network_components/edge_folder/', 
@@ -466,18 +909,22 @@ edge_compilation <- list.files('outputs/network_components/edge_folder/',
                             full.names = TRUE,
                             recursive = TRUE)
 
-edge_compilation <- lapply(edge_compilation, readRDS) %>% bind_rows()
-
+edge_compilation <- lapply(edge_compilation, readRDS) %>% 
+  bind_rows()
 
 
 edge_compilation <- edge_compilation %>% 
-mutate(geometry = paste0('LINESTRING (', x_1, ' ', y_1, ', ', x_2, ' ', y_2, ')' ))
+  mutate(geometry = paste0('LINESTRING (', x_1, ' ', y_1, ', 
+                           ', x_2, ' ', y_2, ')' ))
 
-edge_compilation <- edge_compilation %>% st_as_sf(wkt = 'geometry', crs = 'ESRI:102008')
+edge_compilation <- edge_compilation %>% 
+  st_as_sf(wkt = 'geometry', 
+           crs = 'ESRI:102008')
 
 
 edge_compilation <-  edge_compilation %>% 
-   rename(from = hex_rowid_1, to = hex_rowid_2)
+   rename(from = hex_rowid_1, 
+          to = hex_rowid_2)
 
 edge_compilation$from <- as.character(edge_compilation$from)
 
@@ -487,19 +934,26 @@ duplicate_list <- st_equals(edge_compilation, retain_unique = TRUE)
 
 edge_compilation <- edge_compilation[-unlist(duplicate_list),]
 
-edge_compilation <- edge_compilation %>% mutate(eval_column = case_when(to == from ~ 'self', 
-                                                                        to > from ~ 'not-self',
-                                                             fe           to < from ~ 'not-self'))
-edge_compilation <- edge_compilation %>% filter(eval_column == 'not-self') %>% 
+edge_compilation <- edge_compilation %>% 
+  mutate(eval_column = case_when(to == from ~ 'self', 
+                                 to > from ~ 'not-self',
+                                 to < from ~ 'not-self'))
+
+edge_compilation <- edge_compilation %>% 
+  filter(eval_column == 'not-self') %>% 
   select(-eval_column)
 
 
-edge_compilation <- edge_compilation %>% rowid_to_column('unique_id')
+edge_compilation <- edge_compilation %>% 
+  rowid_to_column('unique_id')
 
-#write_sf(edge_compilation, 'outputs/network_components/edge_compilation_cleaned.gpkg')
+write_sf(edge_compilation, 'outputs/network_components/edge_compilation_cleaned.gpkg')
 
-edge_compilation <- read_sf('outputs/network_components/edge_compilation_cleaned.gpkg')
+```
 
+## v. Create midpoint generator function
+
+```{r}
 midpoint_generator <- function(row_subset) {
   
   midpoint_collection <- tibble(intermediate_id = numeric(),
@@ -514,7 +968,8 @@ midpoint_generator <- function(row_subset) {
   
   for (i in row_subset) {
     ival = eval(i)
-    int_filter <- edge_compilation %>% filter(unique_id == ival)
+    int_filter <- edge_compilation %>% 
+      filter(unique_id == ival)
     int_midpoint <- suppressWarnings(st_centroid(int_filter)) %>%
       st_as_sf() %>% 
       mutate(intermediate_id = ival) %>% 
@@ -525,89 +980,145 @@ midpoint_generator <- function(row_subset) {
   
 }
 
-# Cognoscere
+```
 
-plan(callr, workers = 20)
-options(future.globals.maxSize = 891289600)
+## vi. Load data
 
-midpoint_collection <- future_map(1:250000, ~midpoint_generator(.x)) %>% bind_rows()
+```{r}
+
+edge_compilation <- read_sf('outputs/network_components/edge_compilation_cleaned.gpkg')
+
+```
+
+Warning: 
+
+Warning: UNRELIABLE VALUE: Future (<unnamed-3>) unexpectedly generated random numbers without specifying argument 'seed'. There is a risk that those random numbers are not statistically sound and the overall results might be invalid. To fix this, specify 'seed=TRUE'. This ensures that proper, parallel-safe random numbers are produced. To disable this check, use 'seed=NULL', or set option 'future.rng.onMisuse' to "ignore".
+
+## vii. Run parallel processes
+
+```{r}
+
+# -----------------------------------------------------------------------------
+
+# Primary
+
+midpoint_collection <- future_map(1:200000, ~midpoint_generator(.x)) %>% 
+  bind_rows()
 
 write_sf(midpoint_collection, 'outputs/network_components/midpoint_collection/midpoint_collection_1.gpkg')
 
-# Advesperascit
+# -----------------------------------------------------------------------------
 
-plan(callr, workers = 12)
-options(future.globals.maxSize = 891289600)
+```
 
-midpoint_collection <- future_map(250000:500000, ~midpoint_generator(.x)) %>% bind_rows()
+```{r}
+
+# -----------------------------------------------------------------------------
+
+# Secondary
+
+midpoint_collection <- future_map(200000:400000, ~midpoint_generator(.x)) %>% 
+  bind_rows()
 
 write_sf(midpoint_collection, 'outputs/network_components/midpoint_collection/midpoint_collection_2.gpkg')
 
-# Florilegium
+# -----------------------------------------------------------------------------
 
-plan(callr, workers = 8)
-options(future.globals.maxSize = 891289600)
+```
 
-midpoint_collection <- future_map(500000:815410, ~midpoint_generator(.x)) %>% bind_rows()
+```{r}
+
+# -----------------------------------------------------------------------------
+
+# Tertiary
+
+midpoint_collection <- future_map(400000:600000, ~midpoint_generator(.x)) %>% 
+  bind_rows()
 
 write_sf(midpoint_collection, 'outputs/network_components/midpoint_collection/midpoint_collection_3.gpkg')
 
-mc_1 <- read_sf('outputs/network_components/midpoint_collection/midpoint_collection_1.gpkg')
-  
-mc_2 <- read_sf('outputs/network_components/midpoint_collection/midpoint_collection_2.gpkg')
-  
-mc_3 <- read_sf('outputs/network_components/midpoint_collection/midpoint_collection_3.gpkg')
+# -----------------------------------------------------------------------------
+
+```
+
+```{r}
+# -----------------------------------------------------------------------------
+
+# Quaternary
+
+midpoint_collection <- future_map(600000:815394, ~midpoint_generator(.x)) %>% 
+  bind_rows()
+
+write_sf(midpoint_collection, 'outputs/network_components/midpoint_collection/midpoint_collection_4.gpkg')
+
+# -----------------------------------------------------------------------------
+```
+
+## viii. Compile midpoints
 
 
-midpoint_combined <- bind_rows(mc_1, mc_2, mc_3)
+```{r}
+
+midpoint_list <- list.files('outputs/network_components/midpoint_collection/', 
+                            pattern = '*.gpkg',
+                            full.names = TRUE,
+                            recursive = TRUE) 
+
+midpoint_combined <- lapply(midpoint_list, read_sf) %>% 
+  bind_rows()
 
 
-mp_duplicate_list <- st_equals(midpoint_combined, retain_unique = TRUE)
+mp_duplicate_list <- st_equals(midpoint_combined, 
+                               retain_unique = TRUE)
 
 midpoint_combined  <- midpoint_combined[-unlist(mp_duplicate_list),] 
 
-midpoint_combined$hex_rowid <- 518770:1334179
-
-midpoint_combined <- midpoint_combined %>% rowid_to_column('midpoint_id') %>% 
-    mutate(midpoint_x = sf::st_coordinates(.)[,1],
+midpoint_combined <- midpoint_combined %>% 
+  rowid_to_column('midpoint_id') %>% 
+  mutate(midpoint_x = sf::st_coordinates(.)[,1],
          midpoint_y = sf::st_coordinates(.)[,2]) 
 
-midpoint_aspatial <- midpoint_combined %>% st_drop_geometry()
+midpoint_aspatial <- midpoint_combined %>% 
+  st_drop_geometry()
 
+write_rds(midpoint_aspatial, 'outputs/network_components/midpoint_aspatial.rds')
 
+```
 
+## viv. Generate final collection of edges
+
+```{r}
 final_edge_generator <- function(row_subset) {
   
   final_nodes_template <- tibble(midpoint_x = numeric(),
                       midpoint_y = numeric(),
                       orig_x = numeric(),
                       orig_y = numeric(),
-                      midpoint_id = numeric(),
                       edge_pair_id = character()
                       )
   
   for (i in row_subset) {
-  ival <- eval(i)
-  int_midpoint <- midpoint_aspatial %>% filter(midpoint_id == ival)
-  
-  midpoint_1 <- tibble(midpoint_x = int_midpoint$midpoint_x,
+    ival <- eval(i)
+    
+    int_midpoint <- midpoint_aspatial %>% 
+      filter(midpoint_id == ival)
+    
+    midpoint_1 <- tibble(midpoint_x = int_midpoint$midpoint_x,
                       midpoint_y = int_midpoint$midpoint_y,
                       orig_x = int_midpoint$x_2,
                       orig_y = int_midpoint$y_2,
                       orig_id = int_midpoint$to,
-                      midpoint_id = int_midpoint$hex_rowid,
                       edge_pair_id = paste0(as.character(int_midpoint$to), '_', 
-                                            as.character(int_midpoint$hex_rowid))
+                                            as.character(int_midpoint$from))
                       )
-  
-  midpoint_2 <- tibble(midpoint_x = int_midpoint$midpoint_x,
+    
+    midpoint_2 <- tibble(midpoint_x = int_midpoint$midpoint_x,
                       midpoint_y = int_midpoint$midpoint_y,
                       orig_x = int_midpoint$x_1,
                       orig_y = int_midpoint$y_1,
                       orig_id = int_midpoint$from,
-                      midpoint_id = int_midpoint$hex_rowid,
                       edge_pair_id = paste0(as.character(int_midpoint$from), '_', 
-                                            as.character(int_midpoint$hex_rowid))
+                                            as.character(int_midpoint$to))
                       )
   final_nodes_template <- bind_rows(final_nodes_template, midpoint_1, midpoint_2)
 }
@@ -615,19 +1126,99 @@ final_edge_generator <- function(row_subset) {
 return(final_nodes_template)
   
 }
+```
+
+## vv. Load data
+
+```{r}
+
+midpoint_aspatial <- readRDS('outputs/network_components/midpoint_aspatial.rds')
+
+```
+
+## vvi. Run parallel processes
+
+```{r}
+
+# -----------------------------------------------------------------------------
+
+# Primary
+
+final_edge_collection <- future_map(1:200000, ~final_edge_generator(.x)) %>% 
+  bind_rows()
+
+write_rds(final_edge_collection, paste0(root_name, 'outputs/network_components/final_edge_collection/final_edge_collection_1.rds'))
+
+# -----------------------------------------------------------------------------
+
+```
+
+```{r}
+
+# -----------------------------------------------------------------------------
+
+# Secondary
+
+final_edge_collection <- future_map(200000:400000, ~final_edge_generator(.x)) %>% 
+  bind_rows()
+
+write_rds(final_edge_collection, paste0(root_name, 'outputs/network_components/final_edge_collection/final_edge_collection_2.rds'))
+
+# -----------------------------------------------------------------------------
+
+```
+
+```{r}
+
+# -----------------------------------------------------------------------------
+
+# Tertiary
+
+final_edge_collection <- future_map(400000:600000, ~final_edge_generator(.x)) %>% 
+  bind_rows()
+
+write_rds(final_edge_collection, paste0(root_name, 'outputs/network_components/final_edge_collection/final_edge_collection_3.rds'))
+
+# -----------------------------------------------------------------------------
+```
+
+```{r}
+# -----------------------------------------------------------------------------
+
+# Quaternary
+
+final_edge_collection <- future_map(600000:815410, ~final_edge_generator(.x)) %>% 
+  bind_rows()
+
+write_rds(final_edge_collection, paste0(root_name, 'outputs/network_components/final_edge_collection/final_edge_collection_4.rds'))
+
+# -----------------------------------------------------------------------------
+```
+
+## vvii. Compile final edge collection
+
+```{r}
 
 
-plan(callr, workers = 20)
-options(future.globals.maxSize = 891289600)
+final_edge_list <- list.files('outputs/network_components/final_edge_collection/', 
+                            pattern = '*.rds',
+                            full.names = TRUE,
+                            recursive = TRUE) 
 
-final_edge_collection <- future_map(1:815410, ~final_edge_generator(.x)) %>% bind_rows()
+final_edge_collection <- lapply(final_edge_list, readRDS) %>% 
+  bind_rows()
+
+###
 
 final_edge_collection_sf <- final_edge_collection %>% 
-mutate(geometry = paste0('LINESTRING (', midpoint_x, ' ', midpoint_y, ', ', orig_x, ' ', orig_y, ')' ))
+  mutate(geometry = paste0('LINESTRING (', midpoint_x, ' ', midpoint_y, ', ', 
+                           orig_x, ' ', orig_y, ')' ))
 
-final_edge_collection_sf <- final_edge_collection_sf %>% st_as_sf(wkt = 'geometry', crs = 'ESRI:102008')
+final_edge_collection_sf <- final_edge_collection_sf %>% 
+  st_as_sf(wkt = 'geometry', crs = 'ESRI:102008')
 
-centroid_data <- hex_centroids_aspatial %>% select(hex_rowid, surface_type, lanes, speed_limit)
+centroid_data <- hex_centroids_aspatial %>% 
+  select(hex_rowid, surface_type, lanes, speed_limit)
 
 centroid_data$hex_rowid <- as.character(centroid_data$hex_rowid)
 
@@ -639,7 +1230,6 @@ final_edge_collection_joined <- left_join(final_edge_collection_sf,
                                           centroid_data, 
                                           by = c('orig_id' = 'hex_rowid') )
 
-
 write_sf(final_edge_collection_joined, 'outputs/network_components/final_edge_collection.gpkg')
 
 final_edge_collection_sfnetwork <- final_edge_collection_joined %>% 
@@ -650,11 +1240,13 @@ write_sf(final_edge_collection_sfnetwork, 'outputs/network_components/edge_sfnet
 
 ###
 
-midpoint_streamlined <- midpoint_combined %>% select('hex_rowid')
+midpoint_streamlined <- midpoint_combined %>% 
+  select('hex_rowid')
 
 midpoint_streamlined$hex_rowid <- as.character(midpoint_streamlined$hex_rowid)
 
-centroid_streamlined <- hex_centroids %>% select(hex_rowid)
+centroid_streamlined <- hex_centroids %>% 
+  select(hex_rowid)
 
 centroid_streamlined$hex_rowid <- as.character(centroid_streamlined$hex_rowid)
 
@@ -662,58 +1254,92 @@ final_node_collection <- bind_rows(centroid_streamlined, midpoint_streamlined)
 
 write_sf(final_node_collection, 'outputs/network_components/final_node_collection.gpkg')
 
-final_node_collection_sfnetwork <- final_node_collection %>% rename(index = hex_rowid)
+final_node_collection_sfnetwork <- final_node_collection %>% 
+  rename(index = hex_rowid)
 
 write_sf(final_node_collection_sfnetwork, 'outputs/network_components/node_sfnetwork.gpkg')
 
 ```
 
-# Point of origin and destination
+
+```{r}
+###
+
+# Cleanup:
+
+###
+
+var_list <- ls() %>% 
+  unlist() %>% 
+  as_tibble() 
+
+var_list_filtered <- var_list %>% 
+  filter(!value %in% exemption_list) %>% 
+  deframe()
+
+rm(list = var_list_filtered) 
+
+gc()
+
+###
+
+```
+
+
+# ~ 11.) Point of origin and destination
 
 ```{r}
 
-canada_metro_areas <- read_sf('processed/canada_metro_areas.gpkg') %>% st_transform(crs = 'ESRI:102008')
+canada_metro_areas <- read_sf('processed/canada_metro_areas.gpkg') %>% 
+  st_transform(crs = 'ESRI:102008')
 
 canada_filtered <- canada_metro_areas %>% select(CMANAME, PRNAME) %>%
-  rename(metro_name = CMANAME, prov_state_name = PRNAME) %>% 
+  rename(metro_name = CMANAME, 
+         prov_state_name = PRNAME) %>% 
   mutate(country = 'Canada')
 
 us_metro_areas <- read_sf('processed/us_metro_areas.gpkg') %>% 
   st_transform(crs = 'ESRI:102008')
 
-us_filtered <- us_metro_areas %>% select(NAME)
+us_filtered <- us_metro_areas %>% 
+  select(NAME)
 
 hex_centroids <- read_sf('outputs/network_components/centroids.gpkg')
 
 
 ###
 
-us_filtered <- us_filtered %>% separate(NAME, sep = ',', c('metro_name', 'prov_state_name'), remove = F) %>% select(metro_name, prov_state_name) %>% 
+us_filtered <- us_filtered %>% separate(NAME, sep = ',', 
+                                        c('metro_name', 'prov_state_name'), 
+                                        remove = F) %>% 
+  select(metro_name, prov_state_name) %>% 
   mutate(country = 'US')
 
 north_america_metros <- bind_rows(canada_filtered, us_filtered)
 
-north_america_metros <- north_america_metros %>% rowid_to_column('metro_id')
+north_america_metros <- north_america_metros %>% 
+  rowid_to_column('metro_id')
 
 ```
 
-# Points of origin
+## i. Create point of origin function
 
 ```{r}
 
-
-origin_template <- tibble(x = numeric(),
+origin_generator <- function(row_subset) {
+  
+  origin_template <- tibble(x = numeric(),
                           y = numeric(),
                          metro_id = numeric(),
                          metro_name = character(),
                          prov_state_name = character(),
                          country = character() )
 
-
-for (i in 1:1094) {
+  for (i in row_subset) {
   m_val <- eval(i)
   
-  metro_subset <- north_america_metros %>% filter(metro_id == m_val)
+  metro_subset <- north_america_metros %>% 
+    filter(metro_id == m_val)
   
   total_origins <- st_intersection(hex_centroids, metro_subset)
   
@@ -730,156 +1356,104 @@ for (i in 1:1094) {
     st_drop_geometry()
   
   origin_template <- bind_rows(origin_template, origin_sample)
-  
-  print(paste('Completed:', i))
+}
+   return(origin_template)
 }
 
 
-origin_sample_complete <- origin_template %>% select(x, y, metro_id, metro_name,
-                                                     prov_state_name, country) %>% 
-  st_as_sf(coords = c('x', 'y'), crs = 'ESRI:102008')
+```
+
+## ii. Run parallel processes
+
+```{r}
+
+# -----------------------------------------------------------------------------
+
+# Primary
+
+origin_collection <- future_map(1:250, ~origin_generator(.x)) %>% 
+  bind_rows()
+
+write_rds(origin_collection, paste0(root_name, 'outputs/network_components/origin_collection/origin_collection_2.rds'))
+# -----------------------------------------------------------------------------
+
+```
+
+```{r}
+
+# -----------------------------------------------------------------------------
+
+# Secondary
+
+origin_collection <- future_map(250:500, ~origin_generator(.x)) %>% 
+  bind_rows()
+
+write_rds(origin_collection, paste0(root_name, 'outputs/network_components/origin_collection/origin_collection_2.rds'))
+
+# -----------------------------------------------------------------------------
+
+```
+
+```{r}
+
+# -----------------------------------------------------------------------------
+
+# Tertiary
+
+origin_collection <- future_map(500:750, ~origin_generator(.x)) %>% 
+  bind_rows()
+
+write_rds(origin_collection, paste0(root_name, 'outputs/network_components/origin_collection/origin_collection_3.rds'))
+
+# -----------------------------------------------------------------------------
+```
+
+```{r}
+# -----------------------------------------------------------------------------
+
+# Quaternary
+
+origin_collection <- future_map(750:1094, ~origin_generator(.x)) %>% 
+  bind_rows()
+
+write_rds(origin_collection, paste0(root_name, 'outputs/network_components/origin_collection/origin_collection_4.rds'))
+
+# -----------------------------------------------------------------------------
+```
+
+## iii. Compile points of origin
+
+```{r}
+
+origin_list <- list.files('outputs/network_components/origin_collection/', 
+                            pattern = '*.rds',
+                            full.names = TRUE,
+                            recursive = TRUE) 
+
+origin_collection <- lapply(origin_list, readRDS) %>% 
+  bind_rows()
+
+
+origin_sample_complete <- origin_collection %>% 
+  select(x, y, 
+         metro_id, 
+         metro_name,
+         prov_state_name,
+         country) %>% 
+  st_as_sf(coords = c('x', 'y'), 
+           crs = 'ESRI:102008')
 
 write_sf(origin_sample_complete, 'outputs/network_components/origin_collection.gpkg')
-
 ```
 
-# Destinations, metro areas
-
-```{r}
-
-# Destination
-
-
-na_political_bound <- read_sf('downloads/political_boundaries/boundaries_p_2021_v3.shp') %>% 
-  st_transform(crs = 'ESRI:102008')
-
-bc_bound <- na_political_bound %>% 
-  filter(NAME_En == 'British Columbia')
-
-destination_list <- st_intersection(canada_metro_areas, bc_bound)
-
-destination_list <- destination_list %>% rename(metro_name = CMANAME) %>% 
-  select(metro_name) %>% 
-  filter(metro_name != 'Whitehorse') %>% 
-  rowid_to_column('destination_id')
-
-##
-
-destination_template <- tibble(x = numeric(),
-                          y = numeric(),
-                         destination_name = character(),
-                         geom = st_sfc(crs = 'ESRI:102008')
-                         ) %>% st_as_sf()
-
-
-for (i in 1:26) {
-  d_val <- eval(i)
-  
-  destination_subset <- destination_list %>% filter(destination_id == d_val)
-  
-  destination_area <- as.numeric(st_area(destination_subset)/1000000)
-  
-  if (destination_area > 10) {
-  destination_sample_size = 10
-} else {
-  destination_sample_size = 5
-}
- 
-  destination_sample <- st_sample(destination_subset, 
-                                  size = destination_sample_size) %>% 
-  st_cast("POINT") %>% 
-  st_as_sf() %>% 
-  rename(geom = x) %>% 
-  mutate(x = sf::st_coordinates(.)[,1],
-         y = sf::st_coordinates(.)[,2],
-         destination_name = destination_subset$metro_name
-         ) 
-  destination_template <- bind_rows(destination_template, destination_sample)
-  
-  print(paste('Completed:', i))
-}
-
-destination_template <- destination_template %>% rowid_to_column('destination_id')
-
-
-write_sf(destination_template, 'outputs/network_components/destinations/metro/metro_destinations.gpkg')
-  
-
-```
-
-# Destinations, lakes
-
-```{r}
-cci_lakes <- read_sf('processed/cci_lakes.gpkg') %>% 
-  st_transform(crs = 'ESRI:102008')
-
-cci_lakes_subset <- cci_lakes %>% filter(id == 300000651 | id == 384 | 
-                                           id == 300008244| id == 300000579 |
-                                           id == 300006584 | id == 565 |
-                                           id == 501
-                                         )
-
-name_corrector <- tibble(id = c(384, 501, 565, 
-                                300000579, 300000651, 300006584,
-                                300008244),
-                         new_name = c('Babine', 'Stuart', 'Okanagan',
-                                      'Francois', 'Adams', 'Fraser',
-                                      'Cowichan'))
-
-cci_lakes_subset <- left_join(cci_lakes_subset, name_corrector, by = 'id') %>% 
-  select(new_name) %>% 
-  rename(lake_name = new_name)
-
-write_sf(cci_lakes_subset, 'processed/cci_lakes_sample.gpkg')
-
-cci_buffered_big <- st_buffer(cci_lakes_subset, dist = 5000)
-
-cci_buffered_small <- st_buffer(cci_lakes_subset, dist = 0.01)
-
-st_erase = function(x, y) st_difference(x, st_union(st_combine(y)))
-
-lake_destinations <- st_erase(cci_buffered_big, cci_buffered_small)
-
-lake_destinations <- lake_destinations %>% rowid_to_column('lake_id')
-
-###
-
-lake_destination_template <- tibble(x = numeric(),
-                          y = numeric(),
-                         destination_name = character(),
-                         geom = st_sfc(crs = 'ESRI:102008')
-                         ) %>% st_as_sf()
-
-for (i in 1:7) {
-   d_val <- eval(i)
-   destination_subset <- lake_destinations %>% filter(lake_id == d_val)
-   destination_sample <- st_sample(destination_subset, 
-                                  size = 10) %>% 
-     st_cast("POINT") %>% 
-     st_as_sf() %>% 
-     rename(geom = x) %>% mutate(x = sf::st_coordinates(.)[,1],
-         y = sf::st_coordinates(.)[,2],
-         destination_name = destination_subset$lake_name
-         ) 
-     lake_destination_template <- bind_rows(lake_destination_template, destination_sample)
-  
-  print(paste('Completed:', i))
-}
-
-lake_destination_template <- lake_destination_template %>% 
-  rowid_to_column('destination_id')
-
-write_sf(lake_destination_template, 'outputs/network_components/destinations/lake/lake_destinations.gpkg')
-
-```
-
-# Destinations, Okanagan
+## iv. Destinations, Okanagan
 
 ```{r}
 
 cci_lakes_subset <- read_sf('processed/cci_lakes_sample.gpkg')
 
-okanagan <- cci_lakes_subset %>% filter(lake_name == 'Okanagan')
+okanagan <- cci_lakes_subset %>% 
+  filter(lake_name == 'Okanagan')
 
 okanagan_buffered_big <- st_buffer(okanagan, dist = 5000)
 
@@ -887,7 +1461,8 @@ okanagan_buffered_small <- st_buffer(okanagan, dist = 0.01)
 
 st_erase = function(x, y) st_difference(x, st_union(st_combine(y)))
 
-okanagan_template <- st_erase(okanagan_buffered_big, okanagan_buffered_small)
+okanagan_template <- st_erase(okanagan_buffered_big, 
+                              okanagan_buffered_small)
 
 okanagan_samples <- st_sample(okanagan_template, 
                                   size = 20) %>% 
@@ -895,8 +1470,7 @@ okanagan_samples <- st_sample(okanagan_template,
      st_as_sf() %>% 
      rename(geom = x) %>% mutate(x = sf::st_coordinates(.)[,1],
          y = sf::st_coordinates(.)[,2],
-         destination_name = 'Okanagan'
-         ) 
+         destination_name = 'Okanagan') 
 
 
 okanagan_samples <- okanagan_samples %>% 
@@ -907,44 +1481,75 @@ write_sf(okanagan_samples, 'outputs/network_components/destinations/okanagan/oka
 ```
 
 
-# Network traversal
+# ~ 12.) Network traversal
+
+## i. Generate route components
 
 ```{r}
 
-node_sfnetwork <- read_sf('outputs/network_components/node_sfnetwork.gpkg')
-
-edge_sfnetwork <- read_sf('outputs/network_components/edge_sfnetwork.gpkg')
-
 origins <- read_sf('outputs/network_components/origin_collection.gpkg') %>% 
   rowid_to_column('origin_id')
+
+node_sfnetwork <- read_sf('outputs/network_components/node_sfnetwork.gpkg')
 
 origins_matched <- st_join(origins, node_sfnetwork) 
 
 write_sf(origins_matched, 'outputs/network_components/origin_matched.gpkg')
 
-###
+origin_matched <- read_sf('outputs/network_components/origin_matched.gpkg')
+
+
+##
+
+edge_sfnetwork <- read_sf('outputs/network_components/edge_sfnetwork.gpkg')
+
+edge_sfnetwork_weighted <- edge_sfnetwork %>% 
+  mutate(surface_weight = case_when(surface_type == 'Unpaved' ~ 1,
+                                    surface_type == 'Paved' ~ 4),
+         lanes_weight = case_when(lanes == 1 ~ 1,
+                                  lanes == 2 | lanes == 3 ~ 2,
+                                  lanes > 3 & lanes <= 6 ~ 3,
+                                  lanes > 6 ~ 4),
+         speed_limit_weight = case_when(speed_limit < 50 ~ 1,
+                                        speed_limit >= 50 & speed_limit < 80 ~ 2,
+                                        speed_limit >= 80 & speed_limit <= 130 ~ 4 )) %>% 
+  mutate(combined_weight = surface_weight + lanes_weight + speed_limit_weight)
+  
 
 
 
-network <- sfnetwork(node_sfnetwork, edge_sfnetwork,
-                     directed = FALSE,
-                     node_key = 'index',
-                     force = TRUE) %>% 
-   activate("edges") %>%
-  mutate(weight = edge_length())
+write_sf(edge_sfnetwork_weighted, 'outputs/network_components/edge_sfnetwork_routing_weighted.gpkg')
 
-edge_sfnetwork$to <- as.character(edge_sfnetwork$to)
-edge_sfnetwork$from <- as.character(edge_sfnetwork$from)
-
-write_sf(edge_sfnetwork, 'outputs/network_components/edge_sfnetwork_routing.gpkg')
-
-write_rds(network, 'outputs/network_components/sf_network.rds')
 
 ###
 
 ```
 
-# Route point function
+## ii. Create sfnetwork
+
+```{r}
+
+node_sfnetwork <- read_sf('outputs/network_components/node_sfnetwork.gpkg')
+
+edge_sfnetwork <- read_sf('outputs/network_components/edge_sfnetwork_weighted.gpkg')
+
+network <- sfnetwork(node_sfnetwork, edge_sfnetwork_weighted,
+                     directed = FALSE,
+                     node_key = 'index',
+                     force = TRUE) %>% 
+   activate("edges") %>%
+  mutate(weight = edge_length() * combined_weight)
+
+edge_sfnetwork$to <- as.character(edge_sfnetwork$to)
+edge_sfnetwork$from <- as.character(edge_sfnetwork$from)
+
+
+write_rds(network, 'outputs/network_components/sf_network_weighted.rds')
+
+```
+
+
+## iii. Route point function
 
 ```{r}
 
@@ -961,7 +1566,8 @@ router <- function(row_subset, destination) {
   
   for (i in row_subset) {
     
-      int_origin <- origins_matched %>% filter(origin_id == i)
+      int_origin <- origins_matched %>% 
+        filter(origin_id == i)
     
       inner_template_table <- tibble(index = character(),
                            destination_id = numeric(),
@@ -970,7 +1576,7 @@ router <- function(row_subset, destination) {
                            x = numeric(),
                            y = numeric())
      
-     int_path <- suppressWarnings(st_network_paths(network, 
+      int_path <- suppressWarnings(st_network_paths(network, 
                                                 from = int_origin, 
                                                 to = destination, 
                                                 weights = 'weight'))
@@ -982,8 +1588,10 @@ router <- function(row_subset, destination) {
              mutate(origin_id = int_origin$origin_id) %>% 
              rowid_to_column('node_position')
            int_path_tibble$index <- as.character(int_path_tibble$index)
-           suppressMessages(int_path_joined <- left_join(int_path_tibble, node_aspatial))
-           inner_template_table <- bind_rows(inner_template_table, int_path_joined)
+           suppressMessages(int_path_joined <- 
+                              left_join(int_path_tibble, node_aspatial))
+           inner_template_table <- bind_rows(inner_template_table, 
+                                             int_path_joined)
      }
 
     outer_template_table <- bind_rows(outer_template_table, inner_template_table)
@@ -999,8 +1607,10 @@ spatializer <- function(table, prefix, dist_raster, origins,
       num_groups = group_num
       
       table_groups <- table %>%
-        group_by((row_number()-1) %/% (n()/num_groups)) %>%
-        nest %>% pull(data)
+        group_by((row_number()-1) %/% 
+                   (n()/num_groups)) %>%
+        nest %>% 
+        pull(data)
       
       
       final_template <- tibble(destination_id = numeric(),
@@ -1019,10 +1629,12 @@ spatializer <- function(table, prefix, dist_raster, origins,
         
         j_val = eval(j)
         
-        interior_selection <- table_groups[[j_val]] %>% select(-index)
+        interior_selection <- table_groups[[j_val]] %>% 
+          select(-index)
         
         interior_joined <- left_join(interior_selection, origins, 
-                               by = 'origin_id') %>% select(-index)
+                               by = 'origin_id') %>% 
+          select(-index)
           
         template_points <- interior_joined %>% 
           select(x, y) %>% 
@@ -1039,136 +1651,30 @@ spatializer <- function(table, prefix, dist_raster, origins,
 
         interior_final <- st_join(interior_joined, interior_extraction)
         
-        interior_final <- interior_final %>%  mutate(x = sf::st_coordinates(.)[,1],
-         y = sf::st_coordinates(.)[,2],) %>% 
+        interior_final <- interior_final %>%  
+          mutate(x = sf::st_coordinates(.)[,1],
+                 y = sf::st_coordinates(.)[,2],) %>% 
           st_drop_geometry()
         
         final_template <- rbind(final_template, interior_final)
-}
-      path <- paste0('outputs/network_components/routes/', eval(prefix), 
-      '/', eval(prefix), '_route_', x, '.rds') 
-      write_rds(final_template, path)
+        
+        }
       
-      return(print(paste('Completed:', x)))
- }
-      
-      
+         path <- paste0('outputs/network_components/routes/', 
+                        eval(prefix), '/', eval(prefix), '_route_', 
+                        x, '.rds')
+    
   
+        write_rds(final_template, path)
+          
+        return(print(paste('Completed:', x)))
+}
+      
+      
   
 ```
 
-
-
-# Route generation, metros
-
-```{r}
-
-metro_dest <- read_sf('outputs/network_components/destinations/metro/metro_destinations.gpkg')
-
-origins_matched <- read_sf('outputs/network_components/origin_matched.gpkg')
-
-origins_aspatial <- origins_matched %>% st_drop_geometry()
-
-network <- readRDS('outputs/network_components/sf_network.rds')
-
-node_sfnetwork <- read_sf('outputs/network_components/node_sfnetwork.gpkg')
-
-node_aspatial <- node_sfnetwork %>% mutate(x = sf::st_coordinates(.)[,1],
-         y = sf::st_coordinates(.)[,2],) %>% 
-  st_drop_geometry()
-
-distance_raster <- read_stars('processed/euclidean_distance_from_zm.tif') %>% 
-  rename(buffer_dist = euclidean_distance_from_zm.tif)
-
-###
-
-plan(callr, workers = 6)
-options(future.globals.maxSize = 1.6e+10)
-
-groups <- split(1:10612, ceiling(seq_along(1:10612)/10))
-
-###
-
-for (x in 1:length(groups)) {
-  int_vector <- unlist(groups[x])
-  
-  metro_table <- future_map(int_vector, ~router(.x, destination = metro_dest)) %>% 
-  bind_rows()
-  
-  if (nrow(lake_table > 0)) {
-      spatializer(table = metro_table, 
-                  prefix = 'metro', 
-                  dist_raster = distance_raster,
-                  origins = origins_aspatial,
-                  group_num = 30)
-  } else {
-    print(paste0('No data for ', x, ', skipping!'))
-  }
-  
-}
-
-
-
-
-
-```
-
-
-# Route generation, lakes
-
-```{r}
-
-lake_dest <- read_sf('outputs/network_components/destinations/lake/lake_destinations.gpkg')
-
-origins_matched <- read_sf('outputs/network_components/origin_matched.gpkg')
-
-origins_aspatial <- origins_matched %>% st_drop_geometry()
-
-network <- readRDS('outputs/network_components/sf_network.rds')
-
-node_sfnetwork <- read_sf('outputs/network_components/node_sfnetwork.gpkg')
-
-node_aspatial <- node_sfnetwork %>% mutate(x = sf::st_coordinates(.)[,1],
-         y = sf::st_coordinates(.)[,2],) %>% 
-  st_drop_geometry()
-
-distance_raster <- read_stars('processed/euclidean_distance_from_zm.tif') %>% 
-  rename(buffer_dist = euclidean_distance_from_zm.tif)
-
-###
-
-plan(callr, workers = 6)
-options(future.globals.maxSize = 1.6e+10)
-
-groups <- split(1:10612, ceiling(seq_along(1:10612)/10))
-
-###
-
-
-for (x in 1:length(groups)) {
-  
-  int_vector <- unlist(groups[x])
-  
-  lake_table <- future_map(int_vector, ~router(.x, destination = lake_dest)) %>% 
-  bind_rows()
-  
-  if (nrow(lake_table > 0)) {
-      spatializer(table = lake_table, 
-                  prefix = 'lake', 
-                  dist_raster = distance_raster,
-                  origins = origins_aspatial,
-                  group_num = 30)
-  } else {
-    print(paste0('No data for ', x, ', skipping!'))
-  }
-  
-  
-}
-
-
-```
-
-# Route generation, Okanagan
+## iv. Import route components
 
 ```{r}
 
@@ -1176,9 +1682,10 @@ ok_dest <- read_sf('outputs/network_components/destinations/okanagan/okanagan_de
 
 origins_matched <- read_sf('outputs/network_components/origin_matched.gpkg')
 
-origins_aspatial <- origins_matched %>% st_drop_geometry()
+origins_aspatial <- origins_matched %>% 
+  st_drop_geometry()
 
-network <- readRDS('outputs/network_components/sf_network.rds')
+network <- readRDS('outputs/network_components/sf_network_weighted.rds')
 
 node_sfnetwork <- read_sf('outputs/network_components/node_sfnetwork.gpkg')
 
@@ -1189,16 +1696,36 @@ node_aspatial <- node_sfnetwork %>% mutate(x = sf::st_coordinates(.)[,1],
 distance_raster <- read_stars('processed/euclidean_distance_from_zm.tif') %>% 
   rename(buffer_dist = euclidean_distance_from_zm.tif)
 
-###
-
-plan(callr, workers = 6)
-options(future.globals.maxSize = 1.6e+10)
 
 groups <- split(1:10612, ceiling(seq_along(1:10612)/10))
 
+outer_prefix <- 'okanagan'
+
 ###
 
-for (x in 1:length(groups)) {
+
+```
+
+## iii. Run parallel processes
+
+```{r}
+
+# -----------------------------------------------------------------------------
+
+# Primary
+
+for (x in 1:1062) {
+  
+  path_test <- paste0(root_name, 'outputs/network_components/routes/', 
+                        outer_prefix, '/', outer_prefix, '_route_', 
+                        x, '.rds')
+  
+  if (file.exists(path_test) == TRUE) {
+  
+  print(paste('Route', x, 'already exists, skipping!'))
+  
+} else {
+  
   int_vector <- unlist(groups[x])
   
   ok_table <- future_map(int_vector, ~router(.x, destination = ok_dest)) %>% 
@@ -1211,23 +1738,331 @@ for (x in 1:length(groups)) {
                   origins = origins_aspatial,
                   group_num = 30)
   } else {
+    
     print(paste0('No data for ', x, ', skipping!'))
+    
+  }
+  
   }
   
   gc()
 }
 
+
+# -----------------------------------------------------------------------------
+
 ```
 
-# Summarize route data
+```{r}
 
-# Route risk metrics
+# -----------------------------------------------------------------------------
+
+# Secondary
+
+for (x in 250:500) {
+  
+  path_test <- paste0(root_name, 'outputs/network_components/routes/', 
+                        outer_prefix, '/', outer_prefix, '_route_', 
+                        x, '.rds')
+  
+  if (file.exists(path_test) == TRUE) {
+  
+  print(paste('Route', x, 'already exists, skipping!'))
+  
+} else {
+  
+  int_vector <- unlist(groups[x])
+  
+  ok_table <- future_map(int_vector, ~router(.x, destination = ok_dest)) %>% 
+  bind_rows()
+  
+  if (nrow(ok_table > 0)) {
+      spatializer(table = ok_table, 
+                  prefix = 'okanagan', 
+                  dist_raster = distance_raster,
+                  origins = origins_aspatial,
+                  group_num = 30)
+  } else {
+    
+    print(paste0('No data for ', x, ', skipping!'))
+    
+  }
+  
+  }
+  
+  gc()
+}
+
+
+# -----------------------------------------------------------------------------
+
+```
+
+```{r}
+
+# -----------------------------------------------------------------------------
+
+# Tertiary
+
+for (x in 500:750) {
+  
+  path_test <- paste0(root_name, 'outputs/network_components/routes/', 
+                        outer_prefix, '/', outer_prefix, '_route_', 
+                        x, '.rds')
+  
+  if (file.exists(path_test) == TRUE) {
+  
+  print(paste('Route', x, 'already exists, skipping!'))
+  
+} else {
+  
+  int_vector <- unlist(groups[x])
+  
+  ok_table <- future_map(int_vector, ~router(.x, destination = ok_dest)) %>% 
+  bind_rows()
+  
+  if (nrow(ok_table > 0)) {
+      spatializer(table = ok_table, 
+                  prefix = 'okanagan', 
+                  dist_raster = distance_raster,
+                  origins = origins_aspatial,
+                  group_num = 30)
+  } else {
+    
+    print(paste0('No data for ', x, ', skipping!'))
+    
+  }
+  
+  }
+  
+  gc()
+}
+
+# -----------------------------------------------------------------------------
+```
+
+```{r}
+# -----------------------------------------------------------------------------
+
+# Quaternary
+
+for (x in 750:1062) {
+  
+  path_test <- paste0(root_name, 'outputs/network_components/routes/', 
+                        outer_prefix, '/', outer_prefix, '_route_', 
+                        x, '.rds')
+  
+  if (file.exists(path_test) == TRUE) {
+  
+  print(paste('Route', x, 'already exists, skipping!'))
+  
+} else {
+  
+  int_vector <- unlist(groups[x])
+  
+  ok_table <- future_map(int_vector, ~router(.x, destination = ok_dest)) %>% 
+  bind_rows()
+  
+  if (nrow(ok_table > 0)) {
+      spatializer(table = ok_table, 
+                  prefix = 'okanagan', 
+                  dist_raster = distance_raster,
+                  origins = origins_aspatial,
+                  group_num = 30)
+  } else {
+    
+    print(paste0('No data for ', x, ', skipping!'))
+    
+  }
+  
+  }
+  
+  gc()
+}
+
+
+
+# -----------------------------------------------------------------------------
+```
+
+
+
+## iv. Summarize route data
+
+Route risk metrics
 
 1.) Point of origin exposure
 
 2.) Exposure along route
 
 3.) Distance between last exposure and destination
+
+## v. Destination filter function
+
+```{r}
+
+destination_filter <- function(file_number, destination_number) {
+  ival = eval(file_number)
+  intermediate <- okanagan_files[ival]
+  intermediate <- read_rds(intermediate)
+  intermediate <- intermediate %>% 
+    filter(destination_id == destination_number)
+ 
+  return(intermediate)
+
+}
+
+```
+
+## vi. Route risk calculator function
+
+```{r}
+
+calculator <- function(origin_list, destination_subset) {
+  
+  exposure_index_template <- tibble(origin_id = numeric(),
+                                    destination_id = numeric(),
+                                    origin_exposure = numeric(),
+                                    number_exposures = numeric(),
+                                    last_exposure_position = numeric(),
+                                    route_length = numeric(),
+                                    dist_last_exposure = numeric(),
+                                    exposure_criteria = numeric(),
+                                    buffer_dist_criteria = numeric(),
+                                    dist_last_criteria = numeric(),
+                                    cumulative_score = numeric())
+
+for (i in origin_list) {
+  
+  ival = eval(i)
+  
+  origin_filtered <- destination_subset %>% 
+    filter(origin_id == ival)
+  
+  ###
+  
+  destination_id = unique(origin_filtered$destination_id)
+  
+  origin_exposure <- origin_filtered %>% 
+    filter(node_position == 1) %>% 
+    mutate(buffer_dist_km = buffer_dist / 2000) %>% 
+    select(buffer_dist_km) %>% 
+    deframe()
+  
+  number_exposures <- origin_filtered  %>% 
+    mutate(buffer_dist_km = buffer_dist / 2000) %>% 
+    filter(buffer_dist_km < 50) %>% 
+    mutate(tally  = 1) %>% 
+    summarize(count_exposures = sum(tally)) %>% 
+    deframe()
+  
+  last_exposure_position <- origin_filtered %>% 
+    mutate(buffer_dist_km = buffer_dist / 2000) %>% 
+    filter(buffer_dist_km < 50) %>% 
+    summarize(max_exposure_position = max(node_position)) %>% 
+    deframe()
+  
+  route_length <- max(origin_filtered$node_position) %>% 
+    deframe()
+  
+  ##
+  
+  exposure_index_interior <- tibble(origin_id = ival,
+                                    destination_id = destination_id,
+                                    origin_exposure = origin_exposure,
+                                    number_exposures = number_exposures,
+                                    last_exposure_position = last_exposure_position,
+                                    route_length = route_length)
+  
+  exposure_index_interior_scores <- exposure_index_interior %>% 
+    mutate(dist_last_exposure = (route_length - last_exposure_position) / 2) %>% 
+    mutate(exposure_criteria = case_when(number_exposures == 0 ~ 0,
+                                       number_exposures > 0 ~ 1),
+         buffer_dist_criteria = case_when(origin_exposure > 100 ~ 0,
+                                       origin_exposure > 0 ~ 1),
+         dist_last_criteria = case_when(dist_last_exposure > 3000 ~ 0,
+                                       dist_last_exposure <= 3000 ~ 1),
+         cumulative_score = exposure_criteria + 
+           buffer_dist_criteria + dist_last_criteria)
+  
+  exposure_index_template <- bind_rows(exposure_index_template,
+                                       exposure_index_interior_scores)
+}
+  
+  return(exposure_index_template)
+  
+}
+
+```
+
+## vii. Run parallel processes
+
+```{r}
+
+
+okanagan_files <- list.files(paste0(root_name, 'outputs/network_components/routes/okanagan/'), 
+                            pattern = '*okanagan',
+                            full.names = TRUE,
+                            recursive = TRUE) 
+
+destination_1 <- future_map(1:1055, 
+                            ~destination_filter(.x, 
+                                                destination_number = 1))  %>% 
+  bind_rows()
+
+
+origin_list <- unique(destination_1$origin_id)
+
+origin_groups <- split(1:length(origin_list), ceiling(1:length(origin_list)/10))
+
+###
+
+outer_exposure_index_template <- tibble(origin_id = numeric(),
+                                    destination_id = numeric(),
+                                    origin_exposure = numeric(),
+                                    number_exposures = numeric(),
+                                    last_exposure_position = numeric(),
+                                    route_length = numeric(),
+                                    dist_last_exposure = numeric(),
+                                    exposure_criteria = numeric(),
+                                    buffer_dist_criteria = numeric(),
+                                    dist_last_criteria = numeric(),
+                                    cumulative_score = numeric())
+
+for (i in 1:10) {
+  
+  ival = eval(i)
+  
+  origin_subset <- unlist(origin_groups[ival])
+  
+  destination_subset <- destination_1 %>% 
+    filter(origin_id %in% origin_subset)
+  
+  risk_output <- suppressWarnings(future_map(origin_subset, 
+                          ~calculator(.x, 
+                                      destination_subset = 
+                                        destination_subset)))  %>%
+    bind_rows()
+
+  outer_exposure_index_template <- bind_rows(outer_exposure_index_template,
+                                             risk_output)
+  
+  print(paste('Completed:', ival, 'of', 728))
+  
+}
+
+
+trial_run <- outer_exposure_index_template
+
+
+
+
+
+```
+
+
+# ~ 13.) Sensitivity testing
+
 
 ```{r}
 
@@ -1240,7 +2075,7 @@ complete_table <- lapply(okanagan_files, readRDS) %>%
   bind_rows()
 
 
-
+complete_table <- readRDS(okanagan_files[1])
 ###
 
 exposure_index_template <- tibble(metro_name = character(),
@@ -1261,7 +2096,7 @@ exposure_index_template <- tibble(metro_name = character(),
     filter(buffer_dist_km < 50) %>% 
     summarize(max_exposure_position = max(node_position))
   
-  max_length <- interior_route %>% group_by(metro_name) %>% 
+  max_length <- complete_table %>% group_by(metro_name) %>% 
     summarize(max_length = max(node_position))
   
   last_exposure_comb <- left_join(last_exposure, max_length, by = 'metro_name') %>%
@@ -1281,7 +2116,7 @@ exposure_index_template <- tibble(metro_name = character(),
   exposure_index_template <- bind_rows(exposure_index_template, exposure_indices_calculated)
   
   print(paste('Completed:', ival, 'of', length(okanagan_files)))
-}
+
 
 
 
@@ -1297,13 +2132,197 @@ ggplot() +
 
 
 ```
+### Destination filter function
 
+```{r}
+destination_filter <- function(file_number, destination_number) {
+  ival = eval(file_number)
+  intermediate <- okanagan_files[ival]
+  intermediate <- read_rds(intermediate)
+  intermediate <- intermediate %>% 
+    filter(destination_id == destination_number)
+ 
+  return(intermediate)
 
+}
+```
 
+### Route risk calculator function
+
+```{r}
+sensitivity_calculator <- function(origin_list, destination_subset, buffer_dist_iterator,
+                       last_dist_iterator) {
+  
+  exposure_index_template <- tibble(origin_id = numeric(),
+                                    destination_id = numeric(),
+                                    origin_exposure = numeric(),
+                                    number_exposures = numeric(),
+                                    last_exposure_position = numeric(),
+                                    route_length = numeric(),
+                                    dist_last_exposure = numeric(),
+                                    exposure_criteria = numeric(),
+                                    buffer_dist_criteria = numeric(),
+                                    dist_last_criteria = numeric(),
+                                    cumulative_score = numeric(),
+                                    buffer_dist_iterator = numeric(),
+                                    last_dist_iterator = numeric())
+
+for (i in origin_list) {
+  
+  ival = eval(i)
+  
+  origin_filtered <- destination_subset %>% 
+    filter(origin_id == ival)
+  
+  ###
+  
+  destination_id = unique(origin_filtered$destination_id)
+  
+  origin_exposure <- origin_filtered %>% 
+    filter(node_position == 1) %>% 
+    mutate(buffer_dist_km = buffer_dist / 2000) %>% 
+    select(buffer_dist_km) %>% 
+    deframe()
+  
+  number_exposures <- origin_filtered  %>% 
+    mutate(buffer_dist_km = buffer_dist / 2000) %>% 
+    filter(buffer_dist_km < buffer_dist_iterator) %>% 
+    mutate(tally  = 1) %>% 
+    summarize(count_exposures = sum(tally)) %>% 
+    deframe()
+  
+  last_exposure_position <- origin_filtered %>% 
+    mutate(buffer_dist_km = buffer_dist / 2000) %>% 
+    filter(buffer_dist_km < buffer_dist_iterator) %>% 
+    summarize(max_exposure_position = max(node_position)) %>% 
+    deframe()
+  
+  route_length <- max(origin_filtered$node_position) %>% 
+    deframe()
+  
+  ##
+  
+  exposure_index_interior <- tibble(origin_id = ival,
+                                    destination_id = destination_id,
+                                    origin_exposure = origin_exposure,
+                                    number_exposures = number_exposures,
+                                    last_exposure_position = last_exposure_position,
+                                    route_length = route_length)
+  
+  exposure_index_interior_scores <- exposure_index_interior %>% 
+    mutate(dist_last_exposure = (route_length - last_exposure_position) / 2) %>% 
+    mutate(exposure_criteria = case_when(number_exposures == 0 ~ 0,
+                                       number_exposures > 0 ~ 1),
+         buffer_dist_criteria = case_when(origin_exposure > 100 ~ 0,
+                                       origin_exposure > 0 ~ 1),
+         dist_last_criteria = case_when(dist_last_exposure > last_dist_iterator ~ 0,
+                                       dist_last_exposure <= last_dist_iterator ~ 1),
+         cumulative_score = exposure_criteria + buffer_dist_criteria + dist_last_criteria) %>% 
+    mutate(buffer_dist_iterator = buffer_dist_iterator,
+           last_dist_iterator = last_dist_iterator)
+  
+  exposure_index_template <- bind_rows(exposure_index_template,
+                                       exposure_index_interior_scores)
+}
+  
+  return(exposure_index_template)
+  
+}
+```
+
+# -- Run parallel processes
 
 ```{r}
 
-okanagan_files <- list.files('outputs/network_components/routes/okanagan/', 
+
+okanagan_files <- list.files(paste0(root_name, 'outputs/network_components/routes/okanagan/'), 
+                            pattern = '*okanagan',
+                            full.names = TRUE,
+                            recursive = TRUE) 
+
+destination_1 <- future_map(1:1055, ~destination_filter(.x, destination_number = 1))  %>% 
+  bind_rows()
+
+
+origin_list <- unique(destination_1$origin_id)
+
+origin_groups <- split(1:length(origin_list), ceiling(1:length(origin_list)/10))
+
+###
+
+buffer_vals <- c(50, 45, 40, 35)
+
+last_dist_vals <- c(3000, 2500, 2000, 1500)
+
+grid <- tibble(expand.grid(buffer_vals, last_dist_vals)) %>% 
+  rename(buffer_vals = Var1,
+         last_dist_vals = Var2)
+
+###
+
+s_outer_exposure_index_template <- tibble(origin_id = numeric(),
+                                    destination_id = numeric(),
+                                    origin_exposure = numeric(),
+                                    number_exposures = numeric(),
+                                    last_exposure_position = numeric(),
+                                    route_length = numeric(),
+                                    dist_last_exposure = numeric(),
+                                    exposure_criteria = numeric(),
+                                    buffer_dist_criteria = numeric(),
+                                    dist_last_criteria = numeric(),
+                                    cumulative_score = numeric(),
+                                    buffer_dist_iterator = numeric(),
+                                    last_dist_iterator = numeric(),
+                                    case = character())
+
+
+for (i in 1:2) {
+  
+  ival = eval(i)
+  
+  origin_subset <- unlist(origin_groups[ival])
+  
+  destination_subset <- destination_1 %>% 
+    filter(origin_id %in% origin_subset)
+  
+  for (j in 1:20) {
+    
+    jval = eval(j)
+    
+    sel_buff_dist <- deframe(grid[jval, 1])
+    
+    sel_last_dist <- deframe(grid[jval, 2])
+    
+    case_id <- paste0(sel_buff_dist, '_', sel_last_dist)
+    
+      risk_output <- suppressWarnings(future_map(origin_subset, 
+                          ~calculator(.x, 
+                                      destination_subset = destination_subset,
+                                      buffer_dist_iterator = sel_buff_dist,
+                                      last_dist_iterator = sel_last_dist )))  %>%
+        bind_rows() %>% 
+        mutate(case = case_id)
+
+  s_outer_exposure_index_template <- bind_rows(s_outer_exposure_index_template,
+                                             risk_output)
+  }
+
+  
+  print(paste('Completed:', ival, 'of', 10))
+  
+}
+
+
+```
+
+
+
+
+###
+
+```{r}
+
+okanagan_files <- list.files(paste0(root_name, 'outputs/network_components/routes/okanagan/'), 
                             pattern = '*okanagan',
                             full.names = TRUE,
                             recursive = TRUE) 
@@ -1331,6 +2350,39 @@ for (i in 1:length(okanagan_files)) {
 }
 
 test_fraction <- template %>% filter(destination_id == 1)
+
+
+
+number_exposures <- template  %>% group_by(metro_name) %>% 
+    mutate(buffer_dist_km = buffer_dist / 2000) %>% 
+    filter(buffer_dist_km < 50) %>% 
+    mutate(tally  = 1) %>% 
+    summarize(count_exposures = sum(tally))
+  
+  last_exposure <- template  %>% group_by(metro_name) %>% 
+    mutate(buffer_dist_km = buffer_dist / 2000) %>% 
+    filter(buffer_dist_km < 50) %>% 
+    summarize(max_exposure_position = max(node_position))
+  
+  max_length <- template %>% group_by(metro_name) %>% 
+    summarize(max_length = max(node_position))
+  
+  last_exposure_comb <- left_join(last_exposure, max_length, by = 'metro_name') %>%
+    mutate(last_exposure_dist = max_length - max_exposure_position) %>% 
+    select(metro_name, last_exposure_dist)
+  
+  exposure_indices <- left_join(number_exposures, last_exposure_comb, by = 'metro_name')
+  
+  baseline_exposure_number <- max(exposure_indices$count_exposures)
+  
+  baseline_last_exposure <- max(exposure_indices$last_exposure_dist)
+  
+  exposure_indices_calculated <- exposure_indices %>% 
+    mutate(relative_count = count_exposures / baseline_exposure_number,
+         relative_last_exposure = last_exposure_dist / baseline_last_exposure)
+  
+  exposure_index_template <- bind_rows(exposure_index_template, exposure_indices_calculated)
+
 
 
 test_grouped <- test_fraction  %>% group_by(origin_id) %>% 
@@ -1432,7 +2484,7 @@ test <- readRDS(okanagan_files[54])
 ```
 
 
-# Summary figures
+## Summary figures
 
 ```{r}
 
@@ -1509,6 +2561,56 @@ for (i in 1:length(okanagan_files)) {
 
 write_rds(outer_template, 'outputs/analysis/okanagan_route_data.rds')
 
+outer_template <- read_rds(paste0(root_name, 'outputs/analysis/okanagan_route_data.rds'))
+
+
+risk_spatial_demo <- outer_template %>% select(origin_id, metro_id, 
+                                               scaled_exposure)
+
+risk_spatial_demo_sf <- left_join(north_america_metros, risk_spatial_demo,
+                                  by = 'metro_id')
+
+
+risk_spatial_demo_sf <- risk_spatial_demo_sf %>% 
+  group_by(metro_id) %>% 
+  summarize(mean_exp = mean(scaled_exposure))
+
+r_demo <- risk_spatial_demo_sf %>% 
+  drop_na()
+
+coord_version <- st_centroid(r_demo) %>% 
+    mutate(x = sf::st_coordinates(.)[,1],
+         y = sf::st_coordinates(.)[,2]) %>% 
+  st_drop_geometry()
+
+
+
+# --------------------------------------------------------------------------
+
+# Isa
+
+borders <- read_sf('/home/steven/Documents/workspace/thesis/ch2/gis_data/figure_gis_files/borders_clipped.gpkg')
+
+
+ggplot() + geom_sf(data = borders, fill = 'grey80') +
+  geom_sf(data = r_demo,
+                   aes(fill = mean_exp)) +
+  paletteer::scale_fill_paletteer_c("ggthemes::Orange-Gold", direction = -1) +
+    guides(fill = guide_legend('Mean exposure score \n by metro')) +
+  theme_classic(base_family = extrafont::choose_font('Source Code Pro'), 
+                base_size = 12) 
+
+ggplot() + geom_point(data = coord_version, aes(x = x, y = y, 
+                                                colour = mean_exp)) +
+  paletteer::scale_colour_paletteer_c("ggthemes::Orange-Gold", direction = -1)
+    guides(colour = guide_legend('Mean exposure score \n by metro')) +
+  xlab('Easting') +
+  ylab('Northing')  +
+  theme_classic(base_family = extrafont::choose_font('Source Code Pro'), 
+                base_size = 12) 
+
+
+#------------------------------------------------------------------------------
 
 demonstration_filter <- outer_template %>% filter(destination_id == 14)
 
@@ -1576,7 +2678,164 @@ south_north
 
 ```
 
+# ------------------------------------------------
 
+## Test summary
+
+```{r}
+
+test_summary <- readRDS(paste0(root_name, 'outputs/analysis/route_risk_metric_table.rds')) %>% 
+  group_by(destination_id) %>% 
+  drop_na() %>% 
+  summarize(avg_num_exp = mean(number_exposures),
+            sd_num_exp = sd(number_exposures),
+            avg_max_exp_pos = mean(max_exposure_position),
+            sd_max_exp_pos = sd(max_exposure_position),
+            avg_orig_buff_dist = mean(origin_buffer_dist),
+            sd_orig_buff_dist = sd(origin_buffer_dist),
+            avg_total_length = mean(max_position),
+            sd_total_length = sd(max_position))
+
+
+cumulative_test_sum <- readRDS(paste0(root_name,'outputs/analysis/route_risk_metric_table.rds')) %>% 
+  mutate(group = 1) %>% 
+  group_by(group) %>% 
+  drop_na() %>% 
+  summarize(avg_num_exp = mean(number_exposures),
+            sd_num_exp = sd(number_exposures),
+            avg_max_exp_pos = mean(max_exposure_position),
+            sd_max_exp_pos = sd(max_exposure_position),
+            avg_orig_buff_dist = mean(origin_buffer_dist),
+            sd_orig_buff_dist = sd(origin_buffer_dist),
+            avg_total_length = mean(max_position),
+            sd_total_length = sd(max_position))
+
+  
+
+
+###
+
+
+full_route_metric_table <- readRDS(paste0(root_name, 'outputs/analysis/route_risk_metric_table.rds')) %>% 
+ # filter(metro_name %in% full_metro_list) %>% 
+  left_join(west_east, by = c('metro_id', 'metro_name'))
+  
+
+full_route_summarized <- readRDS(paste0(root_name,'outputs/analysis/route_risk_metric_table_summary.rds')) %>% 
+#  filter(metro_name %in% full_metro_list) %>% 
+  left_join(west_east, by = c('metro_id', 'metro_name'))
+
+full_route_summarized <- full_route_summarized %>% 
+  mutate(dist_last = route_length - mean_last_exposure_position)
+
+
+full_route_risk_calc <- full_route_summarized %>% 
+  mutate(exposure_criteria = case_when(mean_number_exposures == 0 ~ 0,
+                                       mean_number_exposures > 0 ~ 1),
+         buffer_dist_criteria = case_when(mean_origin_buffer_dist > 100 ~ 0,
+                                       mean_origin_buffer_dist > 0 ~ 1),
+         dist_last_criteria = case_when(dist_last > 3000 ~ 0,
+                                       dist_last <= 3000 ~ 1)) %>% 
+  select(metro_id, metro_name, destination_id, west_east, exposure_criteria, 
+         buffer_dist_criteria,
+         dist_last_criteria) %>% 
+  mutate(risk_bins = case_when(exposure_criteria + 
+                                buffer_dist_criteria + 
+                                dist_last_criteria == 3 ~ 3,
+                              exposure_criteria + 
+                                buffer_dist_criteria + 
+                                dist_last_criteria == 2 ~ 2,
+                                       exposure_criteria + 
+                                buffer_dist_criteria + 
+                                dist_last_criteria == 1 ~ 2,
+                              exposure_criteria + 
+                                buffer_dist_criteria + 
+                                dist_last_criteria == 0 ~ 1)) %>% 
+  group_by(metro_id, metro_name) %>% 
+  summarize(risk_bin = max(risk_bins)) %>% 
+  mutate(risk_bin = replace_na(risk_bin, 0))
+
+
+
+
+
+```
+
+# ~~~ risk metrics
+
+```{r}
+
+test <- readRDS('/home/steven/Documents/workspace/thesis/ch2/gis_data/outputs/analysis/route_risk_metric_table.rds')
+
+test_summarized <- test %>% 
+  mutate(exposure_score = case_when(number_exposures > 0 ~ 1,
+                                    number_exposures == 0 ~ 0),
+         origin_score = case_when(origin_buffer_dist > 100 ~ 0,
+                                  origin_buffer_dist <= 100 ~ 1),
+         last_exposure_score = case_when(max_exposure_position >= 3000 ~ 1,
+                                         max_exposure_position < 3000 ~ 0),
+         exposure_score = replace_na(exposure_score, 0),
+         origin_score = replace_na(origin_score, 0),
+         last_exposure_score = replace_na(last_exposure_score, 0),
+         combined_risk_metric = exposure_score + origin_score + last_exposure_score) %>% 
+  select(destination_id, exposure_score, origin_score, last_exposure_score,
+         combined_risk_metric)
+
+test_grouped <- test_summarized %>% 
+  group_by(destination_id) %>% 
+  summarize(mean_exp_score = mean(exposure_score),
+            sd_exp_score = sd(exposure_score),
+            mean_origin_score = mean(origin_score),
+            sd_origin_score = sd(origin_score),
+            mean_last_exp_score = mean(last_exposure_score),
+            sd_last_exp_score = sd(last_exposure_score),
+            mean_combined_risk_metric = mean(combined_risk_metric),
+            sd_combined_risk_metric = sd(combined_risk_metric))
+
+test_cat <- test_summarized %>% 
+  select(destination_id, combined_risk_metric) %>% 
+  group_by(destination_id, combined_risk_metric) %>% 
+  summarize(n = n())
+
+test_cat_lump <- test_summarized %>% 
+  mutate(lump = 1) %>% 
+  select(lump, combined_risk_metric) %>% 
+  group_by(lump, combined_risk_metric) %>% 
+  summarize(n = n())
+
+
+test_lump <- test_summarized %>% 
+  mutate(lump = 1) %>% 
+  group_by(lump) %>% 
+    summarize(mean_exp_score = mean(exposure_score),
+            sd_exp_score = sd(exposure_score),
+            mean_origin_score = mean(origin_score),
+            sd_origin_score = sd(origin_score),
+            mean_last_exp_score = mean(last_exposure_score),
+            sd_last_exp_score = sd(last_exposure_score),
+            mean_combined_risk_metric = mean(combined_risk_metric),
+            sd_combined_risk_metric = sd(combined_risk_metric))
+
+max_me_score <- max(test_grouped$mean_exp_score)
+min_me_score <- min(test_grouped$mean_exp_score)
+
+me_diff <- max_me_score - min_me_score
+
+max_or_score <- max(test_grouped$mean_origin_score)
+min_or_score <- min(test_grouped$mean_origin_score)
+
+or_diff <- max_or_score - min_or_score
+
+max_le_score <- max(test_grouped$mean_last_exp_score)
+min_le_score <- min(test_grouped$mean_last_exp_score)
+
+le_diff <- max_le_score - min_le_score
+
+```
+
+
+
+# ~~~
 
 # Raster gen  
 
@@ -1872,3 +3131,247 @@ figure_1
 ```
 
 ## Figure 1B
+
+
+# ~~ Alternative analyses
+
+
+# Destinations, metro areas
+
+```{r}
+
+# Destination
+
+
+na_political_bound <- read_sf('downloads/political_boundaries/boundaries_p_2021_v3.shp') %>% 
+  st_transform(crs = 'ESRI:102008')
+
+bc_bound <- na_political_bound %>% 
+  filter(NAME_En == 'British Columbia')
+
+destination_list <- st_intersection(canada_metro_areas, bc_bound)
+
+destination_list <- destination_list %>% rename(metro_name = CMANAME) %>% 
+  select(metro_name) %>% 
+  filter(metro_name != 'Whitehorse') %>% 
+  rowid_to_column('destination_id')
+
+##
+
+destination_template <- tibble(x = numeric(),
+                          y = numeric(),
+                         destination_name = character(),
+                         geom = st_sfc(crs = 'ESRI:102008')
+                         ) %>% st_as_sf()
+
+
+for (i in 1:26) {
+  d_val <- eval(i)
+  
+  destination_subset <- destination_list %>% filter(destination_id == d_val)
+  
+  destination_area <- as.numeric(st_area(destination_subset)/1000000)
+  
+  if (destination_area > 10) {
+  destination_sample_size = 10
+} else {
+  destination_sample_size = 5
+}
+ 
+  destination_sample <- st_sample(destination_subset, 
+                                  size = destination_sample_size) %>% 
+  st_cast("POINT") %>% 
+  st_as_sf() %>% 
+  rename(geom = x) %>% 
+  mutate(x = sf::st_coordinates(.)[,1],
+         y = sf::st_coordinates(.)[,2],
+         destination_name = destination_subset$metro_name
+         ) 
+  destination_template <- bind_rows(destination_template, destination_sample)
+  
+  print(paste('Completed:', i))
+}
+
+destination_template <- destination_template %>% rowid_to_column('destination_id')
+
+
+write_sf(destination_template, 'outputs/network_components/destinations/metro/metro_destinations.gpkg')
+  
+
+```
+
+# Destinations, lakes
+
+```{r}
+cci_lakes <- read_sf('processed/cci_lakes.gpkg') %>% 
+  st_transform(crs = 'ESRI:102008')
+
+cci_lakes_subset <- cci_lakes %>% filter(id == 300000651 | id == 384 | 
+                                           id == 300008244| id == 300000579 |
+                                           id == 300006584 | id == 565 |
+                                           id == 501
+                                         )
+
+name_corrector <- tibble(id = c(384, 501, 565, 
+                                300000579, 300000651, 300006584,
+                                300008244),
+                         new_name = c('Babine', 'Stuart', 'Okanagan',
+                                      'Francois', 'Adams', 'Fraser',
+                                      'Cowichan'))
+
+cci_lakes_subset <- left_join(cci_lakes_subset, name_corrector, by = 'id') %>% 
+  select(new_name) %>% 
+  rename(lake_name = new_name)
+
+write_sf(cci_lakes_subset, 'processed/cci_lakes_sample.gpkg')
+
+cci_buffered_big <- st_buffer(cci_lakes_subset, dist = 5000)
+
+cci_buffered_small <- st_buffer(cci_lakes_subset, dist = 0.01)
+
+st_erase = function(x, y) st_difference(x, st_union(st_combine(y)))
+
+lake_destinations <- st_erase(cci_buffered_big, cci_buffered_small)
+
+lake_destinations <- lake_destinations %>% rowid_to_column('lake_id')
+
+###
+
+lake_destination_template <- tibble(x = numeric(),
+                          y = numeric(),
+                         destination_name = character(),
+                         geom = st_sfc(crs = 'ESRI:102008')
+                         ) %>% st_as_sf()
+
+for (i in 1:7) {
+   d_val <- eval(i)
+   destination_subset <- lake_destinations %>% filter(lake_id == d_val)
+   destination_sample <- st_sample(destination_subset, 
+                                  size = 10) %>% 
+     st_cast("POINT") %>% 
+     st_as_sf() %>% 
+     rename(geom = x) %>% mutate(x = sf::st_coordinates(.)[,1],
+         y = sf::st_coordinates(.)[,2],
+         destination_name = destination_subset$lake_name
+         ) 
+     lake_destination_template <- bind_rows(lake_destination_template, destination_sample)
+  
+  print(paste('Completed:', i))
+}
+
+lake_destination_template <- lake_destination_template %>% 
+  rowid_to_column('destination_id')
+
+write_sf(lake_destination_template, 'outputs/network_components/destinations/lake/lake_destinations.gpkg')
+
+```
+
+# Route generation, metros
+
+```{r}
+
+metro_dest <- read_sf('outputs/network_components/destinations/metro/metro_destinations.gpkg')
+
+origins_matched <- read_sf('outputs/network_components/origin_matched.gpkg')
+
+origins_aspatial <- origins_matched %>% st_drop_geometry()
+
+network <- readRDS('outputs/network_components/sf_network.rds')
+
+node_sfnetwork <- read_sf('outputs/network_components/node_sfnetwork.gpkg')
+
+node_aspatial <- node_sfnetwork %>% mutate(x = sf::st_coordinates(.)[,1],
+         y = sf::st_coordinates(.)[,2],) %>% 
+  st_drop_geometry()
+
+distance_raster <- read_stars('processed/euclidean_distance_from_zm.tif') %>% 
+  rename(buffer_dist = euclidean_distance_from_zm.tif)
+
+###
+
+plan(callr, workers = 6)
+options(future.globals.maxSize = 1.6e+10)
+
+groups <- split(1:10612, ceiling(seq_along(1:10612)/10))
+
+###
+
+for (x in 1:length(groups)) {
+  int_vector <- unlist(groups[x])
+  
+  metro_table <- future_map(int_vector, ~router(.x, destination = metro_dest)) %>% 
+  bind_rows()
+  
+  if (nrow(lake_table > 0)) {
+      spatializer(table = metro_table, 
+                  prefix = 'metro', 
+                  dist_raster = distance_raster,
+                  origins = origins_aspatial,
+                  group_num = 30)
+  } else {
+    print(paste0('No data for ', x, ', skipping!'))
+  }
+  
+}
+
+
+
+
+
+```
+
+
+# Route generation, lakes
+
+```{r}
+
+lake_dest <- read_sf('outputs/network_components/destinations/lake/lake_destinations.gpkg')
+
+origins_matched <- read_sf('outputs/network_components/origin_matched.gpkg')
+
+origins_aspatial <- origins_matched %>% st_drop_geometry()
+
+network <- readRDS('outputs/network_components/sf_network.rds')
+
+node_sfnetwork <- read_sf('outputs/network_components/node_sfnetwork.gpkg')
+
+node_aspatial <- node_sfnetwork %>% mutate(x = sf::st_coordinates(.)[,1],
+         y = sf::st_coordinates(.)[,2],) %>% 
+  st_drop_geometry()
+
+distance_raster <- read_stars('processed/euclidean_distance_from_zm.tif') %>% 
+  rename(buffer_dist = euclidean_distance_from_zm.tif)
+
+###
+
+plan(callr, workers = 6)
+options(future.globals.maxSize = 1.6e+10)
+
+groups <- split(1:10612, ceiling(seq_along(1:10612)/10))
+
+###
+
+
+for (x in 1:length(groups)) {
+  
+  int_vector <- unlist(groups[x])
+  
+  lake_table <- future_map(int_vector, ~router(.x, destination = lake_dest)) %>% 
+  bind_rows()
+  
+  if (nrow(lake_table > 0)) {
+      spatializer(table = lake_table, 
+                  prefix = 'lake', 
+                  dist_raster = distance_raster,
+                  origins = origins_aspatial,
+                  group_num = 30)
+  } else {
+    print(paste0('No data for ', x, ', skipping!'))
+  }
+  
+  
+}
+
+
+```
+
